@@ -1,0 +1,19 @@
+[project]
+name = "payments"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "shirohir0",email = "shirohiro93@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard] (>=0.128.4,<0.129.0)"
+]
+
+[tool.poetry]
+packages = [{include = "payments", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
