@@ -13,3 +13,6 @@ class UserWithdrawAmountError(UserError):
 
 class UserInsufficientFundsError(UserError):
     pass
+
+class UserNotFoundError(UserError):
+    pass
