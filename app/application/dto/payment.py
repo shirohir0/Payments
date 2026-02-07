@@ -6,3 +6,9 @@ class DepositDTO:
     user_id: int
     amount: float
     commission: float = 0.0  # комиссия по умолчанию
+
+@dataclass
+class WithdrawDTO:
+    user_id: int
+    amount: float
+    commission: float = 0.0
