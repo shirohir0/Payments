@@ -16,7 +16,7 @@
 Сервис позволяет:
 
 * создавать и хранить пользователей с базовой бизнес-логикой
-* принимать платежи (депозит) и обновлять баланс с учётом комиссии
+* принимать платежи (депозит) и вычитать средства (withdraw) с учётом комиссии
 * хранить историю платежей и комиссий
 
 API остаётся отзывчивым даже при высокой нагрузке, тяжёлые операции можно будет выносить в отдельные воркеры (пока без Celery).
@@ -50,18 +50,19 @@ app/
 ├── api/
 │   └── v1/
 │       ├── __init__.py
-│       ├── payments.py          # депозиты
+│       ├── payments.py          # депозиты и вычеты
 │       ├── users.py             # создание пользователя
 │       ├── health.py
 │       └── schemas/
 │           ├── users.py         # схемы для User
-│           └── payment.py       # схемы для депозита
+│           └── payment.py       # схемы для депозитов и withdraw
 ├── application/
 │   ├── use_cases/
 │   │   ├── create_user.py
-│   │   └── deposit_balance.py
+│   │   ├── deposit_balance.py
+│   │   └── withdraw_balance.py
 │   ├── dto/
-│   │   └── payment.py           # DTO для депозита
+│   │   └── payment.py           # DTO для депозитов и withdraw
 │   └── interfaces/
 ├── domain/
 │   ├── entities/
@@ -140,6 +141,7 @@ uvicorn app.main:app --reload
 * Health-check: `GET /api/v1/health`
 * Создание пользователя: `POST /api/v1/users/`
 * Депозит: `POST /api/v1/payments/deposit`
+* Вычет средств: `POST /api/v1/payments/withdraw`
 
 ---
 
@@ -169,10 +171,18 @@ uvicorn app.main:app --reload
   * обновление баланса пользователя
   * запись платежа и транзакции в БД
   * атомарность через транзакцию SQLAlchemy
+* **Вычет баланса (withdraw)**:
+
+  * use case `withdraw_balance`
+  * DTO `WithdrawDTO`
+  * репозитории `PaymentRepository`, `TransactionRepository`
+  * эндпоинт `/api/v1/payments/withdraw`
+  * проверка баланса
+  * расчёт комиссии 2%
+  * атомарное обновление баланса и запись транзакции
 
 ⏳ В процессе:
 
-* Вычет баланса (withdraw)
 * Фоновые воркеры (Celery)
 * Retry и Dead Letter Queue
 * Docker Compose
