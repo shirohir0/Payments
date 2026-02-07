@@ -1,4 +1,3 @@
-# infrastructure/db/models/user.py
 from sqlalchemy import BigInteger, Numeric
 from sqlalchemy.orm import Mapped, mapped_column
 
