@@ -2,7 +2,7 @@
 
 Надёжный сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Реализован в стиле Clean Architecture: API > Application > Domain > Infrastructure.
 
-**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose и миграции Alembic.
+**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose, idempotency‑key и DLQ.
 
 ## Возможности
 - Приём платежей (deposit/withdraw) с комиссией 2%.
@@ -10,10 +10,10 @@
 - Интеграция с платёжным шлюзом (mock‑gateway с ошибками и таймаутами).
 - Retry с exponential backoff, jitter, max cap и таймаутами.
 - Idempotency‑key для платежей.
+- Dead Letter Queue (DLQ) для окончательно неуспешных задач.
 - Статус платежа и история транзакций.
 - Health‑check эндпоинт.
 - Docker Compose: запуск одной командой.
-- Alembic миграции.
 
 ## Архитектура
 Сервис построен по Clean Architecture:
@@ -56,17 +56,12 @@ WORKER_POLL_INTERVAL_SECONDS=0.5
 WORKER_PROCESSING_TIMEOUT_SECONDS=30.0
 ```
 
-3. Применить миграции.
-```bash
-alembic upgrade head
-```
-
-4. Запустить приложение.
+3. Запустить приложение.
 ```bash
 uvicorn app.main:app --reload
 ```
 
-5. Документация API.
+4. Документация API.
 - Swagger UI: `http://localhost:8000/docs`
 
 ## Основные эндпоинты
@@ -76,6 +71,7 @@ uvicorn app.main:app --reload
 - `GET /api/v1/payments/{payment_id}` — статус платежа.
 - `GET /api/v1/health` — health‑check.
 - `POST /api/v1/mock-gateway/pay` — mock‑gateway (для локального теста).
+- `GET /api/v1/dlq` — список DLQ.
 
 ## Idempotency‑key
 Для защиты от повторных запросов можно передать заголовок:
@@ -83,6 +79,17 @@ uvicorn app.main:app --reload
 Idempotency-Key: <uuid>
 ```
 Если ключ уже использовался для этого пользователя, вернётся существующий `payment_id`.
+
+## Dead Letter Queue (DLQ)
+DLQ хранит платежи, которые окончательно провалились:
+- исчерпаны попытки (`gateway_max_attempts`),
+- неретраемая ошибка (4xx, кроме 429),
+- фатальная внутренняя ошибка.
+
+Просмотр:
+```
+GET /api/v1/dlq?limit=50&offset=0
+```
 
 ## Пример сценария
 1. Создать пользователя:
@@ -121,6 +128,7 @@ curl http://localhost:8000/api/v1/payments/1
 - `users`: id, balance
 - `payments`: amount, commission, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at, idempotency_key
 - `transactions`: amount, commission, type, status
+- `payment_dlq`: payment_id, user_id, amount, commission, payment_type, error, attempts, created_at
 
 ## Переменные окружения
 - `DATABASE_URL` — строка подключения к Postgres.
@@ -141,8 +149,6 @@ curl http://localhost:8000/api/v1/payments/1
 - Статус платежа доступен всегда.
 
 ## TODO (следующие шаги)
-- Автоматический запуск миграций в docker‑compose.
-- Dead Letter Queue для окончательно неуспешных задач.
 - Метрики.
 - Кэширование балансов.
 

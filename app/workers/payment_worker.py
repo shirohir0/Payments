@@ -14,6 +14,7 @@ from app.infrastructure.db.models.transaction import TransactionModel, Transacti
 from app.infrastructure.db.models.user import UserModel
 from app.infrastructure.db.session import AsyncSessionLocal
 from app.infrastructure.payment_gateway.http import PaymentGatewayClient
+from app.infrastructure.repositories.payment_dlq import PaymentDLQRepository
 
 logger = logging.getLogger("payment_worker")
 
@@ -190,6 +191,7 @@ class PaymentWorker:
                     payment.locked_at = None
                     if transaction:
                         transaction.status = TransactionStatus.FAILED
+                    await self._write_dlq(session, payment, transaction, error)
                     return
 
                 backoff_seconds = settings.gateway_backoff_base_seconds * (2 ** (payment.attempts - 1))
@@ -220,3 +222,27 @@ class PaymentWorker:
                 transaction = transaction.scalar_one_or_none()
                 if transaction:
                     transaction.status = TransactionStatus.FAILED
+                await self._write_dlq(session, payment, transaction, error)
+
+    async def _write_dlq(
+        self,
+        session: AsyncSession,
+        payment: PaymentModel,
+        transaction: TransactionModel | None,
+        error: str,
+    ) -> None:
+        repo = PaymentDLQRepository(session)
+        existing = await repo.get_by_payment_id(payment.id)
+        if existing:
+            return
+
+        payment_type = transaction.type.value if transaction else "unknown"
+        await repo.create(
+            payment_id=payment.id,
+            user_id=payment.user_id,
+            amount=float(payment.amount),
+            commission=float(payment.commission),
+            payment_type=payment_type,
+            error=error,
+            attempts=payment.attempts,
+        )
