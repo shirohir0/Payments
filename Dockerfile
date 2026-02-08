@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir --upgrade pip \
         "sqlalchemy>=2.0.46,<3.0.0" \
         "pydantic-settings>=2.12.0,<3.0.0" \
         "asyncpg>=0.31.0,<0.32.0" \
-        "httpx>=0.27.0,<1.0.0"
+        "httpx>=0.27.0,<1.0.0" \
+        "celery>=5.4.0,<6.0.0"
 
 COPY app ./app
 
