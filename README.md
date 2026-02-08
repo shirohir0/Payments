@@ -44,7 +44,15 @@ Copy-Item .env.example .env
 ```bash
 docker compose up --build
 ```
-Собирает и запускает API + worker + RabbitMQ + mock‑gateway + базу данных одной командой.
+Собирает и запускает одной командой:
+- `api`
+- `worker`
+- `rabbitmq`
+- `db`
+- `mock-gateway`
+
+**RabbitMQ Management UI:**
+- `http://localhost:15672` (логин/пароль: `guest/guest`)
 
 ### Локальный запуск (без Docker)
 1. Запустить PostgreSQL и RabbitMQ отдельно.
