@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # External services
     # ===============================
     payment_gateway_url: str
+    payment_gateway_timeout_s: float = Field(default=1.0)
+    gateway_error_rate: float = Field(default=0.25)
+    gateway_timeout_rate: float = Field(default=0.1)
 
     # ===============================
     # Logging

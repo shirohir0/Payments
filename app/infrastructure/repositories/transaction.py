@@ -1,5 +1,6 @@
 from infrastructure.db.models.transaction import TransactionModel, TransactionType, TransactionStatus
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 class TransactionRepository:
     def __init__(self, session: AsyncSession):
@@ -16,3 +17,13 @@ class TransactionRepository:
         )
         self.session.add(transaction)
         return transaction
+
+    async def get_by_payment_id(self, payment_id: int) -> TransactionModel | None:
+        result = await self.session.execute(
+            select(TransactionModel).where(TransactionModel.payment_id == payment_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def set_status(self, transaction: TransactionModel, status: TransactionStatus) -> None:
+        transaction.status = status
+        self.session.add(transaction)
