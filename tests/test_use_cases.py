@@ -1,7 +1,4 @@
-﻿import asyncio
-from dataclasses import dataclass
-
-import pytest
+﻿import pytest
 
 from app.application.dto.payment import DepositDTO, WithdrawDTO
 from app.application.use_cases.deposit_balance import DepositBalanceUseCase
@@ -28,15 +25,15 @@ class FakeSession:
         return None
 
 
-@dataclass
 class FakePayment:
-    id: int
-    user_id: int
-    amount: float
-    commission: float
-    status: PaymentStatus
-    idempotency_key: str | None = None
-    last_error: str | None = None
+    def __init__(self, id, user_id, amount, commission, status, idempotency_key=None):
+        self.id = id
+        self.user_id = user_id
+        self.amount = amount
+        self.commission = commission
+        self.status = status
+        self.idempotency_key = idempotency_key
+        self.last_error = None
 
 
 class FakeUserRepo:
@@ -84,14 +81,12 @@ class FakeTransactionRepo:
         return kwargs
 
 
-class FakeTaskRepo:
-    def __init__(self, session):
-        self.session = session
-        if not hasattr(session, "_tasks"):
-            session._tasks = []
+class TaskCollector:
+    def __init__(self):
+        self.items: list[int] = []
 
-    async def create(self, payment_id: int):
-        self.session._tasks.append(payment_id)
+    def enqueue(self, payment_id: int):
+        self.items.append(payment_id)
 
 
 @pytest.mark.asyncio
@@ -101,8 +96,9 @@ async def test_deposit_creates_payment_transaction_and_task(monkeypatch):
     user_repo = FakeUserRepo(users)
     payment_repo = FakePaymentRepo()
     transaction_repo = FakeTransactionRepo()
+    tasks = TaskCollector()
 
-    monkeypatch.setattr("app.application.use_cases.deposit_balance.PaymentTaskRepository", FakeTaskRepo)
+    monkeypatch.setattr("app.application.use_cases.deposit_balance.enqueue_payment", tasks.enqueue)
 
     use_case = DepositBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
     payment_id = await use_case.execute(DepositDTO(user_id=1, amount=100, idempotency_key="k1"))
@@ -110,7 +106,7 @@ async def test_deposit_creates_payment_transaction_and_task(monkeypatch):
     assert payment_id == 1
     assert len(payment_repo._payments) == 1
     assert len(transaction_repo.items) == 1
-    assert session._tasks == [1]
+    assert tasks.items == [1]
 
 
 @pytest.mark.asyncio
@@ -120,8 +116,9 @@ async def test_deposit_idempotency_returns_existing(monkeypatch):
     user_repo = FakeUserRepo(users)
     payment_repo = FakePaymentRepo()
     transaction_repo = FakeTransactionRepo()
+    tasks = TaskCollector()
 
-    monkeypatch.setattr("app.application.use_cases.deposit_balance.PaymentTaskRepository", FakeTaskRepo)
+    monkeypatch.setattr("app.application.use_cases.deposit_balance.enqueue_payment", tasks.enqueue)
 
     use_case = DepositBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
     first_id = await use_case.execute(DepositDTO(user_id=1, amount=100, idempotency_key="k1"))
@@ -129,7 +126,7 @@ async def test_deposit_idempotency_returns_existing(monkeypatch):
 
     assert first_id == second_id
     assert len(payment_repo._payments) == 1
-    assert session._tasks == [1]
+    assert tasks.items == [1]
 
 
 @pytest.mark.asyncio
@@ -139,8 +136,9 @@ async def test_withdraw_insufficient_funds_creates_failed_payment(monkeypatch):
     user_repo = FakeUserRepo(users)
     payment_repo = FakePaymentRepo()
     transaction_repo = FakeTransactionRepo()
+    tasks = TaskCollector()
 
-    monkeypatch.setattr("app.application.use_cases.withdraw_balance.PaymentTaskRepository", FakeTaskRepo)
+    monkeypatch.setattr("app.application.use_cases.withdraw_balance.enqueue_payment", tasks.enqueue)
 
     use_case = WithdrawBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
 
@@ -150,7 +148,7 @@ async def test_withdraw_insufficient_funds_creates_failed_payment(monkeypatch):
     assert len(payment_repo._payments) == 1
     assert payment_repo._payments[0].status == PaymentStatus.FAILED
     assert len(transaction_repo.items) == 1
-    assert not hasattr(session, "_tasks")
+    assert tasks.items == []
 
 
 @pytest.mark.asyncio
@@ -160,12 +158,13 @@ async def test_withdraw_success_enqueues_task(monkeypatch):
     user_repo = FakeUserRepo(users)
     payment_repo = FakePaymentRepo()
     transaction_repo = FakeTransactionRepo()
+    tasks = TaskCollector()
 
-    monkeypatch.setattr("app.application.use_cases.withdraw_balance.PaymentTaskRepository", FakeTaskRepo)
+    monkeypatch.setattr("app.application.use_cases.withdraw_balance.enqueue_payment", tasks.enqueue)
 
     use_case = WithdrawBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
     payment_id = await use_case.execute(WithdrawDTO(user_id=1, amount=10, idempotency_key="k3"))
 
     assert payment_id == 1
     assert len(payment_repo._payments) == 1
-    assert session._tasks == [1]
+    assert tasks.items == [1]
