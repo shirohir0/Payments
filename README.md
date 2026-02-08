@@ -2,7 +2,7 @@
 
 Надёжный сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Реализован в стиле Clean Architecture: API > Application > Domain > Infrastructure.
 
-**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose, idempotency‑key, DLQ, метрики и гарантированная доставка задач через очередь в БД.
+**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose, idempotency‑key, DLQ, метрики, гарантированная доставка задач и подробная Swagger‑документация.
 
 ## Возможности
 - Приём платежей (deposit/withdraw) с комиссией 2%.
@@ -16,6 +16,7 @@
 - Статус платежа и история транзакций.
 - Health‑check эндпоинт.
 - Docker Compose: запуск одной командой.
+- Подробная Swagger‑документация (описания, response‑модели, теги).
 
 ## Архитектура
 Сервис построен по Clean Architecture:
@@ -76,6 +77,10 @@ uvicorn app.main:app --reload
 - `GET /api/v1/dlq` — список DLQ.
 - `GET /api/v1/metrics` — метрики.
 
+## Swagger‑документация
+Swagger оформлен через response‑модели, описания полей и теги разделов. Полное описание доступно по:
+- `http://localhost:8000/docs`
+
 ## Idempotency‑key
 Для защиты от повторных запросов можно передать заголовок:
 ```
@@ -100,46 +105,6 @@ GET /api/v1/dlq?limit=50&offset=0
 Просмотр:
 ```
 GET /api/v1/metrics
-```
-
-Пример ответа:
-```json
-{
-  "payments_deposit_requests_total": 10,
-  "payments_withdraw_requests_total": 3,
-  "payments_task_enqueued_total": 13,
-  "payments_processing_started_total": 13,
-  "payments_success_total": 9,
-  "payments_failed_total": 4,
-  "payments_retried_total": 6,
-  "gateway_success_total": 9,
-  "gateway_errors_total": 2,
-  "gateway_timeouts_total": 1,
-  "gateway_non_retryable_errors_total": 1,
-  "dlq_written_total": 2,
-  "idempotency_hits_total": 1
-}
-```
-
-## Пример сценария
-1. Создать пользователя:
-```bash
-curl -X POST http://localhost:8000/api/v1/users/ \
-  -H 'Content-Type: application/json' \
-  -d '{"balance": 1000}'
-```
-
-2. Пополнение:
-```bash
-curl -X POST http://localhost:8000/api/v1/payments/deposit \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: 123e4567-e89b-12d3-a456-426614174000' \
-  -d '{"user_id": 1, "deposit": 200}'
-```
-
-3. Проверка статуса:
-```bash
-curl http://localhost:8000/api/v1/payments/1
 ```
 
 ## Гарантированная доставка задач

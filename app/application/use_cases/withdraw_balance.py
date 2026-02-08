@@ -20,6 +20,7 @@ class WithdrawBalanceUseCase:
         failed_payment_id: int | None = None
 
         async with self.session.begin():
+            logger = __import__("logging").getLogger("usecase.withdraw")
             user: User | None = await self.user_repo.get_by_id(dto.user_id)
             if not user:
                 raise UserNotFoundError(f"User {dto.user_id} not found")
@@ -31,6 +32,7 @@ class WithdrawBalanceUseCase:
                 )
                 if existing:
                     await metrics.inc("idempotency_hits_total")
+                    logger.info("idempotency hit: user_id=%s payment_id=%s", user.id, existing.id)
                     return existing.id
 
             dto.commission = round(dto.amount * settings.transaction_fee, 2)
@@ -58,6 +60,8 @@ class WithdrawBalanceUseCase:
 
                 insufficient_funds = True
                 failed_payment_id = payment.id
+                logger.info("withdraw failed: insufficient_funds user_id=%s payment_id=%s amount=%s commission=%s",
+                            user.id, payment.id, dto.amount, dto.commission)
             else:
                 payment = await self.payment_repo.create(
                     user_id=user.id,
@@ -81,6 +85,8 @@ class WithdrawBalanceUseCase:
                 task_repo = PaymentTaskRepository(self.session)
                 await task_repo.create(payment.id)
                 await metrics.inc("payments_task_enqueued_total")
+                logger.info("payment created: type=withdraw payment_id=%s user_id=%s amount=%s commission=%s",
+                            payment.id, user.id, dto.amount, dto.commission)
 
         if insufficient_funds:
             raise UserInsufficientFundsError(

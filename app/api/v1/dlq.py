@@ -1,12 +1,16 @@
+import logging
+
 from fastapi import APIRouter, Query
 
 from app.infrastructure.db.session import session_depends
+from app.api.v1.schemas.monitoring import DlqItemResponse
 from app.infrastructure.repositories.payment_dlq import PaymentDLQRepository
 
 router = APIRouter(prefix="/dlq", tags=["DLQ"])
+logger = logging.getLogger("dlq_api")
 
 
-@router.get("")
+@router.get("", summary="Список DLQ", response_model=list[DlqItemResponse])
 async def list_dlq(
     session: session_depends,
     limit: int = Query(default=50, ge=1, le=500),
@@ -14,6 +18,7 @@ async def list_dlq(
 ):
     repo = PaymentDLQRepository(session)
     items = await repo.list_latest(limit=limit, offset=offset)
+    logger.info("dlq list: count=%s limit=%s offset=%s", len(items), limit, offset)
     return [
         {
             "id": item.id,

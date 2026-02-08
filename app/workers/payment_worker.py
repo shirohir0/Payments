@@ -70,11 +70,13 @@ class PaymentWorker:
                     if payment.status == PaymentStatus.SUCCESS:
                         task.status = PaymentTaskStatus.DONE
                         task.locked_at = None
+                        logger.info("task skipped: already success payment_id=%s task_id=%s", task.payment_id, task.id)
                         return None
                     if payment.status == PaymentStatus.FAILED:
                         task.status = PaymentTaskStatus.FAILED
                         task.last_error = payment.last_error
                         task.locked_at = None
+                        logger.info("task skipped: already failed payment_id=%s task_id=%s", task.payment_id, task.id)
                         return None
 
                     payment.status = PaymentStatus.PROCESSING
@@ -83,6 +85,7 @@ class PaymentWorker:
                     payment.next_retry_at = None
                 await session.flush()
                 await metrics.inc("payments_processing_started_total")
+                logger.info("task reserved: task_id=%s payment_id=%s attempt=%s", task.id, task.payment_id, task.attempts)
 
                 return task.id
 
@@ -95,6 +98,7 @@ class PaymentWorker:
         response = await self.gateway.charge(payload)
         if response.success:
             await metrics.inc("gateway_success_total")
+            logger.info("gateway success: payment_id=%s", payload.get("payment_id"))
             await self._apply_success(task_id)
             return
 
@@ -103,9 +107,11 @@ class PaymentWorker:
                 await metrics.inc("gateway_timeouts_total")
             else:
                 await metrics.inc("gateway_errors_total")
+            logger.warning("gateway retryable error: payment_id=%s error=%s", payload.get("payment_id"), response.error)
             await self._apply_failure(task_id, response.error or "gateway_error")
         else:
             await metrics.inc("gateway_non_retryable_errors_total")
+            logger.error("gateway non-retryable error: payment_id=%s error=%s", payload.get("payment_id"), response.error)
             await self._mark_failed_task(task_id, response.error or "gateway_error")
 
     async def _build_payload_from_task(self, task_id: int) -> dict[str, object] | None:
@@ -160,6 +166,7 @@ class PaymentWorker:
                     task.last_error = "missing_transaction"
                     task.locked_at = None
                     await metrics.inc("payments_failed_total")
+                    logger.error("apply_success failed: missing_transaction payment_id=%s", payment.id)
                     await self._write_dlq(session, payment, transaction, "missing_transaction")
                     return
 
@@ -173,6 +180,7 @@ class PaymentWorker:
                     task.last_error = "missing_user"
                     task.locked_at = None
                     await metrics.inc("payments_failed_total")
+                    logger.error("apply_success failed: missing_user payment_id=%s", payment.id)
                     await self._write_dlq(session, payment, transaction, "missing_user")
                     return
 
@@ -190,6 +198,7 @@ class PaymentWorker:
                         task.last_error = "insufficient_funds"
                         task.locked_at = None
                         await metrics.inc("payments_failed_total")
+                        logger.warning("apply_success failed: insufficient_funds payment_id=%s", payment.id)
                         await self._write_dlq(session, payment, transaction, "insufficient_funds")
                         return
                     user.balance = float(user.balance) - total_amount
@@ -206,6 +215,7 @@ class PaymentWorker:
                 task.next_retry_at = None
 
                 await metrics.inc("payments_success_total")
+                logger.info("payment success: payment_id=%s", payment.id)
 
     async def _apply_failure(self, task_id: int, error: str) -> None:
         async with AsyncSessionLocal() as session:
@@ -239,10 +249,13 @@ class PaymentWorker:
                     task.last_error = error
                     task.locked_at = None
                     await metrics.inc("payments_failed_total")
+                    logger.error("payment failed: max_attempts payment_id=%s error=%s", payment.id, error)
                     await self._write_dlq(session, payment, transaction, error)
                     return
 
                 await metrics.inc("payments_retried_total")
+                logger.warning("payment retry scheduled: payment_id=%s error=%s next_attempt=%s",
+                               payment.id, error, task.attempts + 1)
                 backoff_seconds = settings.gateway_backoff_base_seconds * (2 ** (task.attempts - 1))
                 backoff_seconds = min(backoff_seconds, settings.gateway_backoff_max_seconds)
                 jitter = random.uniform(0, settings.gateway_backoff_jitter_seconds)
@@ -286,6 +299,7 @@ class PaymentWorker:
                     transaction.status = TransactionStatus.FAILED
 
                 await metrics.inc("payments_failed_total")
+                logger.error("payment failed: payment_id=%s error=%s", task.payment_id, error)
                 if payment:
                     await self._write_dlq(session, payment, transaction, error)
 
@@ -312,3 +326,4 @@ class PaymentWorker:
             attempts=payment.attempts,
         )
         await metrics.inc("dlq_written_total")
+        logger.warning("dlq written: payment_id=%s error=%s", payment.id, error)

@@ -17,6 +17,7 @@ class DepositBalanceUseCase:
 
     async def execute(self, dto: DepositDTO) -> int:
         async with self.session.begin():
+            logger = __import__("logging").getLogger("usecase.deposit")
             user: User | None = await self.user_repo.get_by_id(dto.user_id)
             if not user:
                 raise UserNotFoundError(f"User {dto.user_id} not found")
@@ -28,6 +29,7 @@ class DepositBalanceUseCase:
                 )
                 if existing:
                     await metrics.inc("idempotency_hits_total")
+                    logger.info("idempotency hit: user_id=%s payment_id=%s", user.id, existing.id)
                     return existing.id
 
             dto.commission = round(dto.amount * settings.transaction_fee, 2)
@@ -54,5 +56,7 @@ class DepositBalanceUseCase:
             task_repo = PaymentTaskRepository(self.session)
             await task_repo.create(payment.id)
             await metrics.inc("payments_task_enqueued_total")
+            logger.info("payment created: type=deposit payment_id=%s user_id=%s amount=%s commission=%s",
+                        payment.id, user.id, dto.amount, dto.commission)
 
         return payment.id
