@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, or_, select
@@ -97,7 +98,10 @@ class PaymentWorker:
             await self._apply_success(payment_id)
             return
 
-        await self._apply_failure(payment_id, response.error or "gateway_error")
+        if response.retryable:
+            await self._apply_failure(payment_id, response.error or "gateway_error")
+        else:
+            await self._mark_failed(payment_id, response.error or "gateway_error")
 
     async def _build_payload(self, payment_id: int) -> dict[str, object] | None:
         async with AsyncSessionLocal() as session:
@@ -189,10 +193,12 @@ class PaymentWorker:
                     return
 
                 backoff_seconds = settings.gateway_backoff_base_seconds * (2 ** (payment.attempts - 1))
+                backoff_seconds = min(backoff_seconds, settings.gateway_backoff_max_seconds)
+                jitter = random.uniform(0, settings.gateway_backoff_jitter_seconds)
                 payment.status = PaymentStatus.NEW
                 payment.last_error = error
                 payment.locked_at = None
-                payment.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
+                payment.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds + jitter)
                 if transaction:
                     transaction.status = TransactionStatus.PROCESSING
 

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     gateway_timeout_seconds: float = Field(default=1.0)
     gateway_max_attempts: int = Field(default=3)
     gateway_backoff_base_seconds: float = Field(default=1.0)
+    gateway_backoff_max_seconds: float = Field(default=30.0)
+    gateway_backoff_jitter_seconds: float = Field(default=0.5)
 
     # ===============================
     # Worker

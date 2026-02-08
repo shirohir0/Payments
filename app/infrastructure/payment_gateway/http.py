@@ -13,6 +13,7 @@ class GatewayResponse:
     success: bool
     error: str | None = None
     raw_status: int | None = None
+    retryable: bool = True
 
 
 class PaymentGatewayClient:
@@ -35,8 +36,10 @@ class PaymentGatewayClient:
         if response.status_code >= 200 and response.status_code < 300:
             return GatewayResponse(success=True, raw_status=response.status_code)
 
+        retryable = response.status_code >= 500 or response.status_code == 429
         return GatewayResponse(
             success=False,
             error=f"gateway_error_{response.status_code}",
             raw_status=response.status_code,
+            retryable=retryable,
         )
