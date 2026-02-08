@@ -4,8 +4,6 @@ from app.core.settings import settings
 from app.core.logging import setup_logging
 from fastapi import FastAPI
 
-from app.workers.payment_worker import PaymentWorker
-
 setup_logging()
 
 openapi_tags = [
@@ -30,17 +28,3 @@ app = FastAPI(
 
 app.include_router(router)
 app.add_middleware(DBExceptionMiddleware)
-
-
-@app.on_event("startup")
-async def startup():
-    worker = PaymentWorker()
-    app.state.payment_worker = worker
-    await worker.start()
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    worker = getattr(app.state, "payment_worker", None)
-    if worker:
-        await worker.stop()

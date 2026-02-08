@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     # ===============================
     payment_gateway_url: str
 
+    # ===============================
+    # Queue (RabbitMQ / Celery)
+    # ===============================
+    celery_broker_url: str = Field(default="amqp://guest:guest@localhost:5672//")
+    celery_result_backend: str = Field(default="rpc://")
+    celery_task_time_limit_seconds: int = Field(default=30)
+    celery_task_soft_time_limit_seconds: int = Field(default=25)
+
     gateway_timeout_seconds: float = Field(default=1.0)
     gateway_max_attempts: int = Field(default=3)
     gateway_backoff_base_seconds: float = Field(default=1.0)

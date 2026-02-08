@@ -5,7 +5,7 @@
 ## Возможности
 - Приём платежей (deposit/withdraw) с комиссией 2%.
 - Асинхронная обработка через воркер (не блокирует API).
-- Гарантированная доставка задач через очередь `payment_tasks` в БД.
+- Очередь задач через RabbitMQ + Celery (production‑ready).
 - Retry с exponential backoff, jitter и таймаутами.
 - Idempotency‑key для защиты от повторных запросов.
 - Dead Letter Queue (DLQ) для окончательно неуспешных задач.
@@ -40,23 +40,29 @@ Copy-Item .env.example .env
 ```
 
 ## Запуск
-### 1. Запуск базы данных через Docker Compose
-```bash
-docker compose up -d db
-```
-Запускает PostgreSQL в фоне.
-
-### 2. Запуск сервиса
-```bash
-uvicorn app.main:app --reload
-```
-Запускает API‑сервис с автоперезагрузкой.
-
-### Альтернатива: запуск всего проекта через Docker Compose
+### Запуск через Docker Compose (рекомендуется)
 ```bash
 docker compose up --build
 ```
-Собирает и запускает API + mock‑gateway + базу данных одной командой.
+Собирает и запускает API + worker + RabbitMQ + mock‑gateway + базу данных одной командой.
+
+### Локальный запуск (без Docker)
+1. Запустить PostgreSQL и RabbitMQ отдельно.
+2. Запустить API:
+```bash
+uvicorn app.main:app --reload
+```
+3. Запустить worker:
+
+**Linux/macOS:**
+```bash
+celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
+```
+
+**Windows (PowerShell):**
+```powershell
+poetry run celery -A app.workers.celery_app.celery_app worker --loglevel=INFO -P solo
+```
 
 ## Использование
 ### Swagger
@@ -91,15 +97,6 @@ curl -X POST http://localhost:8000/api/v1/payments/withdraw \
 curl http://localhost:8000/api/v1/payments/1
 ```
 
-## Скриншоты
-![Запуск сервиса](image.png)
-![Swagger UI](image-1.png)
-![Swagger UI](image-2.png)
-![Пример запроса](image-3.png)
-![Пример запроса](image-4.png)
-![Пример запроса](image-5.png)
-![Пример запроса](image-6.png)
-
 ## Тесты
 ```bash
 poetry run pytest -q
@@ -132,6 +129,14 @@ GATEWAY_BACKOFF_MAX_SECONDS=30.0
 GATEWAY_BACKOFF_JITTER_SECONDS=0.5
 
 # ===============================
+# Queue (RabbitMQ / Celery)
+# ===============================
+CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
+CELERY_RESULT_BACKEND=rpc://
+CELERY_TASK_TIME_LIMIT_SECONDS=30
+CELERY_TASK_SOFT_TIME_LIMIT_SECONDS=25
+
+# ===============================
 # Worker
 # ===============================
 WORKER_POLL_INTERVAL_SECONDS=0.5
@@ -147,11 +152,6 @@ LOG_LEVEL=INFO
 # ===============================
 TRANSACTION_FEE=2
 ```
-
-## Что планируется добавить
-- Кэширование балансов.
-- Вынести метрики в Prometheus/StatsD (если нужна долговременная история).
-- Автоматические миграции БД (по желанию, если решите использовать Alembic).
 
 ## Лицензия
 MIT
