@@ -105,6 +105,15 @@ curl -X POST http://localhost:8000/api/v1/payments/withdraw \
 curl http://localhost:8000/api/v1/payments/1
 ```
 
+## Скриншоты
+![image](image.png)
+![image-1](image-1.png)
+![image-2](image-2.png)
+![image-3](image-3.png)
+![image-4](image-4.png)
+![image-5](image-5.png)
+![image-6](image-6.png)
+
 ## Тесты
 ```bash
 poetry run pytest -q
