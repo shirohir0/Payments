@@ -15,11 +15,22 @@ class Settings(BaseSettings):
     # Database
     # ===============================
     database_url: str
+    auto_create_tables: bool = Field(default=False)
 
     # ===============================
     # External services
     # ===============================
     payment_gateway_url: str
+
+    gateway_timeout_seconds: float = Field(default=1.0)
+    gateway_max_attempts: int = Field(default=3)
+    gateway_backoff_base_seconds: float = Field(default=1.0)
+
+    # ===============================
+    # Worker
+    # ===============================
+    worker_poll_interval_seconds: float = Field(default=0.5)
+    worker_processing_timeout_seconds: float = Field(default=30.0)
 
     # ===============================
     # Logging

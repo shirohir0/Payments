@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from decimal import Decimal
 from infrastructure.db.session import session_depends
 from application.dto.payment import DepositDTO
 from application.use_cases.deposit_balance import DepositBalanceUseCase
@@ -24,14 +23,14 @@ async def payments_deposit(
     use_case = DepositBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
 
     try:
-        new_balance: Decimal = await use_case.execute(
+        payment_id: int = await use_case.execute(
             DepositDTO(user_id=data.user_id, amount=data.deposit)
         )
         return {
+            "payment_id": payment_id,
             "user_id": data.user_id,
             "deposit": data.deposit,
-            "new_balance": float(new_balance),
-            "status": "success"
+            "status": "processing"
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -47,14 +46,40 @@ async def payments_withdraw(
     use_case = WithdrawBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
 
     try:
-        new_balance: Decimal = await use_case.execute(
+        payment_id: int = await use_case.execute(
             WithdrawDTO(user_id=data.user_id, amount=data.amount)
         )
         return {
+            "payment_id": payment_id,
             "user_id": data.user_id,
             "withdraw": data.amount,
-            "new_balance": float(new_balance),
-            "status": "success"
+            "status": "processing"
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{payment_id}")
+async def payment_status(
+    payment_id: int,
+    session: session_depends,
+):
+    payment_repo = PaymentRepository(session)
+    transaction_repo = TransactionRepository(session)
+
+    payment = await payment_repo.get_by_id(payment_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    transaction = await transaction_repo.get_by_payment_id(payment_id)
+
+    return {
+        "payment_id": payment.id,
+        "user_id": payment.user_id,
+        "amount": float(payment.amount),
+        "commission": float(payment.commission),
+        "status": payment.status.value,
+        "attempts": payment.attempts,
+        "last_error": payment.last_error,
+        "transaction_status": transaction.status.value if transaction else None,
+    }

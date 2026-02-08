@@ -1,8 +1,10 @@
-from decimal import Decimal
 from application.dto.payment import WithdrawDTO
-from domain.entities.user import User
-from domain.exceptions import UserNotFoundError, UserInsufficientFundsError
 from core.settings import settings
+from domain.entities.user import User
+from domain.exceptions import UserInsufficientFundsError, UserNotFoundError
+from infrastructure.db.models.payment import PaymentStatus
+from infrastructure.db.models.transaction import TransactionStatus
+
 
 class WithdrawBalanceUseCase:
     def __init__(self, user_repo, payment_repo, transaction_repo, session):
@@ -11,42 +13,61 @@ class WithdrawBalanceUseCase:
         self.transaction_repo = transaction_repo
         self.session = session
 
-    async def execute(self, dto: WithdrawDTO) -> Decimal:
-        async with self.session.begin():  # атомарная транзакция
-            # 1️⃣ Получаем пользователя
+    async def execute(self, dto: WithdrawDTO) -> int:
+        insufficient_funds = False
+        failed_payment_id: int | None = None
+
+        async with self.session.begin():
             user: User | None = await self.user_repo.get_by_id(dto.user_id)
             if not user:
                 raise UserNotFoundError(f"User {dto.user_id} not found")
 
-            # 2️⃣ Рассчёт комиссии 2%
             dto.commission = round(dto.amount * settings.transaction_fee, 2)
-            total_amount = Decimal(str(dto.amount + dto.commission))
+            total_amount = round(dto.amount + dto.commission, 2)
 
-            # 3️⃣ Проверяем, что баланс позволяет снять
             if user.balance < total_amount:
-                raise UserInsufficientFundsError("Insufficient funds for this withdrawal")
+                payment = await self.payment_repo.create(
+                    user_id=user.id,
+                    amount=dto.amount,
+                    commission=dto.commission,
+                    status=PaymentStatus.FAILED,
+                )
+                payment.last_error = "insufficient_funds"
+                await self.session.flush()
 
-            # 4️⃣ Вычитаем сумму + комиссию
-            user.withdraw(total_amount)
-            await self.user_repo.save(user)
+                await self.transaction_repo.create(
+                    user_id=user.id,
+                    payment_id=payment.id,
+                    amount=dto.amount,
+                    commission=dto.commission,
+                    type="withdraw",
+                    status=TransactionStatus.FAILED.value,
+                )
 
-            # 5️⃣ Создаём Payment
-            payment = await self.payment_repo.create(
-                user_id=user.id,
-                amount=dto.amount,
-                commission=dto.commission
+                insufficient_funds = True
+                failed_payment_id = payment.id
+            else:
+                payment = await self.payment_repo.create(
+                    user_id=user.id,
+                    amount=dto.amount,
+                    commission=dto.commission,
+                    status=PaymentStatus.NEW,
+                )
+
+                await self.session.flush()
+
+                await self.transaction_repo.create(
+                    user_id=user.id,
+                    payment_id=payment.id,
+                    amount=dto.amount,
+                    commission=dto.commission,
+                    type="withdraw",
+                    status=TransactionStatus.PROCESSING.value,
+                )
+
+        if insufficient_funds:
+            raise UserInsufficientFundsError(
+                f"Insufficient funds for this withdrawal. payment_id={failed_payment_id}"
             )
-            await self.session.flush()  # чтобы payment.id был доступен
 
-            # 6️⃣ Создаём Transaction
-            await self.transaction_repo.create(
-                user_id=user.id,
-                payment_id=payment.id,
-                amount=dto.amount,
-                commission=dto.commission,
-                type="withdraw",
-                status="success"
-            )
-
-        # 7️⃣ Возвращаем новый баланс
-        return user.balance
+        return payment.id
