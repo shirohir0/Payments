@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Integer,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -24,6 +25,9 @@ class PaymentStatus(PyEnum):
 
 class PaymentModel(Base):
     __tablename__ = "payments"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_payments_user_idempotency_key"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -46,6 +50,11 @@ class PaymentModel(Base):
         Enum(PaymentStatus),
         default=PaymentStatus.NEW,
         nullable=False,
+    )
+
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
     )
 
     attempts: Mapped[int] = mapped_column(

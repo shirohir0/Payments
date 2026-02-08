@@ -22,6 +22,14 @@ class WithdrawBalanceUseCase:
             if not user:
                 raise UserNotFoundError(f"User {dto.user_id} not found")
 
+            if dto.idempotency_key:
+                existing = await self.payment_repo.get_by_idempotency_key(
+                    user_id=user.id,
+                    key=dto.idempotency_key,
+                )
+                if existing:
+                    return existing.id
+
             dto.commission = round(dto.amount * settings.transaction_fee, 2)
             total_amount = round(dto.amount + dto.commission, 2)
 
@@ -31,6 +39,7 @@ class WithdrawBalanceUseCase:
                     amount=dto.amount,
                     commission=dto.commission,
                     status=PaymentStatus.FAILED,
+                    idempotency_key=dto.idempotency_key,
                 )
                 payment.last_error = "insufficient_funds"
                 await self.session.flush()
@@ -52,6 +61,7 @@ class WithdrawBalanceUseCase:
                     amount=dto.amount,
                     commission=dto.commission,
                     status=PaymentStatus.NEW,
+                    idempotency_key=dto.idempotency_key,
                 )
 
                 await self.session.flush()

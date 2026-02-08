@@ -2,16 +2,18 @@
 
 Надёжный сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Реализован в стиле Clean Architecture: API > Application > Domain > Infrastructure.
 
-**Статус:** реализованы core-функции, фоновой воркер, ретраи, health‑check и Docker Compose (Postgres + API + отдельный mock‑gateway).
+**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose и миграции Alembic.
 
 ## Возможности
 - Приём платежей (deposit/withdraw) с комиссией 2%.
 - Асинхронная фоновая обработка через воркер.
 - Интеграция с платёжным шлюзом (mock‑gateway с ошибками и таймаутами).
 - Retry с exponential backoff, jitter, max cap и таймаутами.
+- Idempotency‑key для платежей.
 - Статус платежа и история транзакций.
 - Health‑check эндпоинт.
 - Docker Compose: запуск одной командой.
+- Alembic миграции.
 
 ## Архитектура
 Сервис построен по Clean Architecture:
@@ -54,12 +56,17 @@ WORKER_POLL_INTERVAL_SECONDS=0.5
 WORKER_PROCESSING_TIMEOUT_SECONDS=30.0
 ```
 
-3. Запустить приложение.
+3. Применить миграции.
+```bash
+alembic upgrade head
+```
+
+4. Запустить приложение.
 ```bash
 uvicorn app.main:app --reload
 ```
 
-4. Документация API.
+5. Документация API.
 - Swagger UI: `http://localhost:8000/docs`
 
 ## Основные эндпоинты
@@ -69,6 +76,13 @@ uvicorn app.main:app --reload
 - `GET /api/v1/payments/{payment_id}` — статус платежа.
 - `GET /api/v1/health` — health‑check.
 - `POST /api/v1/mock-gateway/pay` — mock‑gateway (для локального теста).
+
+## Idempotency‑key
+Для защиты от повторных запросов можно передать заголовок:
+```
+Idempotency-Key: <uuid>
+```
+Если ключ уже использовался для этого пользователя, вернётся существующий `payment_id`.
 
 ## Пример сценария
 1. Создать пользователя:
@@ -82,6 +96,7 @@ curl -X POST http://localhost:8000/api/v1/users/ \
 ```bash
 curl -X POST http://localhost:8000/api/v1/payments/deposit \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: 123e4567-e89b-12d3-a456-426614174000' \
   -d '{"user_id": 1, "deposit": 200}'
 ```
 
@@ -104,7 +119,7 @@ curl http://localhost:8000/api/v1/payments/1
 ## Модель данных
 Таблицы:
 - `users`: id, balance
-- `payments`: amount, commission, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at
+- `payments`: amount, commission, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at, idempotency_key
 - `transactions`: amount, commission, type, status
 
 ## Переменные окружения
@@ -126,7 +141,7 @@ curl http://localhost:8000/api/v1/payments/1
 - Статус платежа доступен всегда.
 
 ## TODO (следующие шаги)
-- Idempotency keys.
+- Автоматический запуск миграций в docker‑compose.
 - Dead Letter Queue для окончательно неуспешных задач.
 - Метрики.
 - Кэширование балансов.
