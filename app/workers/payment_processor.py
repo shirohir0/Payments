@@ -133,11 +133,19 @@ class PaymentProcessor:
                 payment = await session.get(PaymentModel, payment_id, with_for_update=True)
                 if not payment:
                     return
+                transaction = await session.execute(
+                    select(TransactionModel)
+                    .where(TransactionModel.payment_id == payment_id)
+                    .with_for_update()
+                )
+                transaction = transaction.scalar_one_or_none()
 
                 if payment.attempts >= settings.gateway_max_attempts:
                     payment.status = PaymentStatus.FAILED
                     payment.last_error = error
                     payment.locked_at = None
+                    if transaction:
+                        transaction.status = TransactionStatus.FAILED
                     await metrics.inc("payments_failed_total")
                     await self._write_dlq(session, payment, error)
                     logger.error("payment failed: max_attempts payment_id=%s", payment.id)
@@ -151,6 +159,8 @@ class PaymentProcessor:
                 payment.last_error = error
                 payment.locked_at = None
                 payment.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds + jitter)
+                if transaction:
+                    transaction.status = TransactionStatus.PROCESSING
 
     async def _mark_failed(self, payment_id: int, error: str) -> None:
         async with AsyncSessionLocal() as session:
@@ -158,10 +168,18 @@ class PaymentProcessor:
                 payment = await session.get(PaymentModel, payment_id, with_for_update=True)
                 if not payment:
                     return
+                transaction = await session.execute(
+                    select(TransactionModel)
+                    .where(TransactionModel.payment_id == payment_id)
+                    .with_for_update()
+                )
+                transaction = transaction.scalar_one_or_none()
 
                 payment.status = PaymentStatus.FAILED
                 payment.last_error = error
                 payment.locked_at = None
+                if transaction:
+                    transaction.status = TransactionStatus.FAILED
                 await metrics.inc("payments_failed_total")
                 await self._write_dlq(session, payment, error)
                 logger.error("payment failed: payment_id=%s error=%s", payment.id, error)

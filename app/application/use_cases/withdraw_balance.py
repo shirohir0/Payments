@@ -19,6 +19,7 @@ class WithdrawBalanceUseCase:
         insufficient_funds = False
         failed_payment_id: int | None = None
 
+        payment_id: int | None = None
         async with self.session.begin():
             logger = __import__("logging").getLogger("usecase.withdraw")
             user: User | None = await self.user_repo.get_by_id(dto.user_id)
@@ -82,14 +83,22 @@ class WithdrawBalanceUseCase:
                     status=TransactionStatus.PROCESSING.value,
                 )
 
-                enqueue_payment(payment.id)
-                await metrics.inc("payments_task_enqueued_total")
-                logger.info("payment created: type=withdraw payment_id=%s user_id=%s amount=%s commission=%s",
-                            payment.id, user.id, dto.amount, dto.commission)
+                payment_id = payment.id
+                logger.info(
+                    "payment created: type=withdraw payment_id=%s user_id=%s amount=%s commission=%s",
+                    payment.id,
+                    user.id,
+                    dto.amount,
+                    dto.commission,
+                )
 
         if insufficient_funds:
             raise UserInsufficientFundsError(
                 f"Insufficient funds for this withdrawal. payment_id={failed_payment_id}"
             )
 
-        return payment.id
+        if payment_id is not None:
+            enqueue_payment(payment_id)
+            await metrics.inc("payments_task_enqueued_total")
+
+        return payment_id

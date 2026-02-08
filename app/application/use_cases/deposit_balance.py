@@ -16,6 +16,7 @@ class DepositBalanceUseCase:
         self.session = session
 
     async def execute(self, dto: DepositDTO) -> int:
+        payment_id: int | None = None
         async with self.session.begin():
             logger = __import__("logging").getLogger("usecase.deposit")
             user: User | None = await self.user_repo.get_by_id(dto.user_id)
@@ -53,9 +54,17 @@ class DepositBalanceUseCase:
                 status=TransactionStatus.PROCESSING.value,
             )
 
-            enqueue_payment(payment.id)
-            await metrics.inc("payments_task_enqueued_total")
-            logger.info("payment created: type=deposit payment_id=%s user_id=%s amount=%s commission=%s",
-                        payment.id, user.id, dto.amount, dto.commission)
+            payment_id = payment.id
+            logger.info(
+                "payment created: type=deposit payment_id=%s user_id=%s amount=%s commission=%s",
+                payment.id,
+                user.id,
+                dto.amount,
+                dto.commission,
+            )
 
-        return payment.id
+        if payment_id is not None:
+            enqueue_payment(payment_id)
+            await metrics.inc("payments_task_enqueued_total")
+
+        return payment_id
