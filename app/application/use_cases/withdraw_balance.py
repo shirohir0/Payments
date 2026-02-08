@@ -5,6 +5,7 @@ from app.domain.exceptions import UserInsufficientFundsError, UserNotFoundError
 from app.infrastructure.db.models.payment import PaymentStatus
 from app.infrastructure.db.models.transaction import TransactionStatus
 from app.core.metrics import metrics
+from app.infrastructure.repositories.payment_task import PaymentTaskRepository
 
 
 class WithdrawBalanceUseCase:
@@ -76,6 +77,10 @@ class WithdrawBalanceUseCase:
                     type="withdraw",
                     status=TransactionStatus.PROCESSING.value,
                 )
+
+                task_repo = PaymentTaskRepository(self.session)
+                await task_repo.create(payment.id)
+                await metrics.inc("payments_task_enqueued_total")
 
         if insufficient_funds:
             raise UserInsufficientFundsError(

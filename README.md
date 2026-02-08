@@ -2,11 +2,12 @@
 
 Надёжный сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Реализован в стиле Clean Architecture: API > Application > Domain > Infrastructure.
 
-**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose, idempotency‑key, DLQ и метрики.
+**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose, idempotency‑key, DLQ, метрики и гарантированная доставка задач через очередь в БД.
 
 ## Возможности
 - Приём платежей (deposit/withdraw) с комиссией 2%.
 - Асинхронная фоновая обработка через воркер.
+- Гарантированная доставка задач (очередь `payment_tasks` в БД).
 - Интеграция с платёжным шлюзом (mock‑gateway с ошибками и таймаутами).
 - Retry с exponential backoff, jitter, max cap и таймаутами.
 - Idempotency‑key для платежей.
@@ -106,6 +107,7 @@ GET /api/v1/metrics
 {
   "payments_deposit_requests_total": 10,
   "payments_withdraw_requests_total": 3,
+  "payments_task_enqueued_total": 13,
   "payments_processing_started_total": 13,
   "payments_success_total": 9,
   "payments_failed_total": 4,
@@ -140,9 +142,15 @@ curl -X POST http://localhost:8000/api/v1/payments/deposit \
 curl http://localhost:8000/api/v1/payments/1
 ```
 
+## Гарантированная доставка задач
+- Каждому платежу соответствует запись в очереди `payment_tasks`.
+- Воркер берёт задачу через `SELECT ... FOR UPDATE SKIP LOCKED`.
+- При падении воркера задача возвращается в очередь по таймауту.
+- Задача помечается `DONE` только после успешного завершения платежа.
+
 ## Фоновая обработка
 - Воркер запускается на старте приложения.
-- Берёт платежи со статусом `NEW` или «зависшие» `PROCESSING`.
+- Берёт задачи со статусом `NEW` или «зависшие» `PROCESSING`.
 - Выполняет запрос к шлюзу с retry/backoff, jitter и max cap.
 - На успехе обновляет баланс пользователя.
 
@@ -156,6 +164,7 @@ curl http://localhost:8000/api/v1/payments/1
 - `users`: id, balance
 - `payments`: amount, commission, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at, idempotency_key
 - `transactions`: amount, commission, type, status
+- `payment_tasks`: payment_id, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at
 - `payment_dlq`: payment_id, user_id, amount, commission, payment_type, error, attempts, created_at
 
 ## Переменные окружения
@@ -172,7 +181,8 @@ curl http://localhost:8000/api/v1/payments/1
 - `WORKER_PROCESSING_TIMEOUT_SECONDS` — таймаут «зависших» задач.
 
 ## Надёжность
-- Каждому платежу соответствует запись в БД.
+- Каждому платежу соответствует запись в БД и в очереди задач.
+- Обработка платежа атомарна: баланс, платёж, транзакция и задача обновляются в одной транзакции.
 - Повторы при сбоях шлюза с backoff и jitter, 4xx (кроме 429) без ретраев.
 - Статус платежа доступен всегда.
 

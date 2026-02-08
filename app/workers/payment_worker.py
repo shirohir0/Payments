@@ -5,17 +5,19 @@ import logging
 import random
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import metrics
 from app.core.settings import settings
 from app.infrastructure.db.models.payment import PaymentModel, PaymentStatus
+from app.infrastructure.db.models.payment_task import PaymentTaskModel, PaymentTaskStatus
 from app.infrastructure.db.models.transaction import TransactionModel, TransactionStatus, TransactionType
 from app.infrastructure.db.models.user import UserModel
 from app.infrastructure.db.session import AsyncSessionLocal
 from app.infrastructure.payment_gateway.http import PaymentGatewayClient
 from app.infrastructure.repositories.payment_dlq import PaymentDLQRepository
+from app.infrastructure.repositories.payment_task import PaymentTaskRepository
 
 logger = logging.getLogger("payment_worker")
 
@@ -38,68 +40,62 @@ class PaymentWorker:
     async def run(self) -> None:
         logger.info("payment worker started")
         while not self._stop_event.is_set():
-            payment_id = await self._reserve_payment()
-            if payment_id is None:
+            task_id = await self._reserve_task()
+            if task_id is None:
                 await asyncio.sleep(settings.worker_poll_interval_seconds)
                 continue
 
-            await self._process_payment(payment_id)
+            await self._process_task(task_id)
 
         logger.info("payment worker stopped")
 
-    async def _reserve_payment(self) -> int | None:
+    async def _reserve_task(self) -> int | None:
         now = datetime.now(timezone.utc)
         stuck_before = now - timedelta(seconds=settings.worker_processing_timeout_seconds)
 
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                stmt = (
-                    select(PaymentModel)
-                    .where(
-                        or_(
-                            PaymentModel.status == PaymentStatus.NEW,
-                            and_(
-                                PaymentModel.status == PaymentStatus.PROCESSING,
-                                PaymentModel.locked_at.is_not(None),
-                                PaymentModel.locked_at < stuck_before,
-                            ),
-                        )
-                    )
-                    .where(
-                        or_(
-                            PaymentModel.next_retry_at.is_(None),
-                            PaymentModel.next_retry_at <= now,
-                        )
-                    )
-                    .order_by(PaymentModel.created_at)
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
-                )
-
-                result = await session.execute(stmt)
-                payment = result.scalar_one_or_none()
-                if not payment:
+                repo = PaymentTaskRepository(session)
+                task = await repo.reserve_next(now=now, stuck_before=stuck_before)
+                if not task:
                     return None
 
-                payment.status = PaymentStatus.PROCESSING
-                payment.attempts = payment.attempts + 1
-                payment.locked_at = now
-                payment.next_retry_at = None
+                task.status = PaymentTaskStatus.PROCESSING
+                task.attempts = task.attempts + 1
+                task.locked_at = now
+                task.next_retry_at = None
+
+                payment = await session.get(PaymentModel, task.payment_id, with_for_update=True)
+                if payment:
+                    if payment.status == PaymentStatus.SUCCESS:
+                        task.status = PaymentTaskStatus.DONE
+                        task.locked_at = None
+                        return None
+                    if payment.status == PaymentStatus.FAILED:
+                        task.status = PaymentTaskStatus.FAILED
+                        task.last_error = payment.last_error
+                        task.locked_at = None
+                        return None
+
+                    payment.status = PaymentStatus.PROCESSING
+                    payment.attempts = task.attempts
+                    payment.locked_at = now
+                    payment.next_retry_at = None
                 await session.flush()
                 await metrics.inc("payments_processing_started_total")
 
-                return payment.id
+                return task.id
 
-    async def _process_payment(self, payment_id: int) -> None:
-        payload = await self._build_payload(payment_id)
+    async def _process_task(self, task_id: int) -> None:
+        payload = await self._build_payload_from_task(task_id)
         if payload is None:
-            await self._mark_failed(payment_id, "missing_transaction")
+            await self._mark_failed_task(task_id, "missing_transaction")
             return
 
         response = await self.gateway.charge(payload)
         if response.success:
             await metrics.inc("gateway_success_total")
-            await self._apply_success(payment_id)
+            await self._apply_success(task_id)
             return
 
         if response.retryable:
@@ -107,19 +103,23 @@ class PaymentWorker:
                 await metrics.inc("gateway_timeouts_total")
             else:
                 await metrics.inc("gateway_errors_total")
-            await self._apply_failure(payment_id, response.error or "gateway_error")
+            await self._apply_failure(task_id, response.error or "gateway_error")
         else:
             await metrics.inc("gateway_non_retryable_errors_total")
-            await self._mark_failed(payment_id, response.error or "gateway_error")
+            await self._mark_failed_task(task_id, response.error or "gateway_error")
 
-    async def _build_payload(self, payment_id: int) -> dict[str, object] | None:
+    async def _build_payload_from_task(self, task_id: int) -> dict[str, object] | None:
         async with AsyncSessionLocal() as session:
-            payment = await session.get(PaymentModel, payment_id)
+            task = await session.get(PaymentTaskModel, task_id)
+            if not task:
+                return None
+
+            payment = await session.get(PaymentModel, task.payment_id)
             if not payment:
                 return None
 
             transaction = await session.execute(
-                select(TransactionModel).where(TransactionModel.payment_id == payment_id)
+                select(TransactionModel).where(TransactionModel.payment_id == payment.id)
             )
             transaction = transaction.scalar_one_or_none()
             if not transaction:
@@ -133,16 +133,22 @@ class PaymentWorker:
                 "type": transaction.type.value,
             }
 
-    async def _apply_success(self, payment_id: int) -> None:
+    async def _apply_success(self, task_id: int) -> None:
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                payment = await session.get(PaymentModel, payment_id, with_for_update=True)
+                task = await session.get(PaymentTaskModel, task_id, with_for_update=True)
+                if not task:
+                    return
+
+                payment = await session.get(PaymentModel, task.payment_id, with_for_update=True)
                 if not payment or payment.status == PaymentStatus.SUCCESS:
+                    task.status = PaymentTaskStatus.DONE
+                    task.locked_at = None
                     return
 
                 transaction = await session.execute(
                     select(TransactionModel)
-                    .where(TransactionModel.payment_id == payment_id)
+                    .where(TransactionModel.payment_id == payment.id)
                     .with_for_update()
                 )
                 transaction = transaction.scalar_one_or_none()
@@ -150,6 +156,9 @@ class PaymentWorker:
                     payment.status = PaymentStatus.FAILED
                     payment.last_error = "missing_transaction"
                     payment.locked_at = None
+                    task.status = PaymentTaskStatus.FAILED
+                    task.last_error = "missing_transaction"
+                    task.locked_at = None
                     await metrics.inc("payments_failed_total")
                     await self._write_dlq(session, payment, transaction, "missing_transaction")
                     return
@@ -160,6 +169,9 @@ class PaymentWorker:
                     payment.last_error = "missing_user"
                     payment.locked_at = None
                     transaction.status = TransactionStatus.FAILED
+                    task.status = PaymentTaskStatus.FAILED
+                    task.last_error = "missing_user"
+                    task.locked_at = None
                     await metrics.inc("payments_failed_total")
                     await self._write_dlq(session, payment, transaction, "missing_user")
                     return
@@ -174,6 +186,9 @@ class PaymentWorker:
                         payment.last_error = "insufficient_funds"
                         payment.locked_at = None
                         transaction.status = TransactionStatus.FAILED
+                        task.status = PaymentTaskStatus.FAILED
+                        task.last_error = "insufficient_funds"
+                        task.locked_at = None
                         await metrics.inc("payments_failed_total")
                         await self._write_dlq(session, payment, transaction, "insufficient_funds")
                         return
@@ -184,63 +199,95 @@ class PaymentWorker:
                 payment.locked_at = None
                 payment.next_retry_at = None
                 transaction.status = TransactionStatus.SUCCESS
+
+                task.status = PaymentTaskStatus.DONE
+                task.last_error = None
+                task.locked_at = None
+                task.next_retry_at = None
+
                 await metrics.inc("payments_success_total")
 
-    async def _apply_failure(self, payment_id: int, error: str) -> None:
+    async def _apply_failure(self, task_id: int, error: str) -> None:
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                payment = await session.get(PaymentModel, payment_id, with_for_update=True)
-                if not payment:
+                task = await session.get(PaymentTaskModel, task_id, with_for_update=True)
+                if not task:
                     return
+
+                payment = await session.get(PaymentModel, task.payment_id, with_for_update=True)
+                if not payment:
+                    task.status = PaymentTaskStatus.FAILED
+                    task.last_error = "missing_payment"
+                    task.locked_at = None
+                    return
+                payment.attempts = task.attempts
 
                 transaction = await session.execute(
                     select(TransactionModel)
-                    .where(TransactionModel.payment_id == payment_id)
+                    .where(TransactionModel.payment_id == payment.id)
                     .with_for_update()
                 )
                 transaction = transaction.scalar_one_or_none()
 
-                if payment.attempts >= settings.gateway_max_attempts:
+                if task.attempts >= settings.gateway_max_attempts:
                     payment.status = PaymentStatus.FAILED
                     payment.last_error = error
                     payment.locked_at = None
                     if transaction:
                         transaction.status = TransactionStatus.FAILED
+                    task.status = PaymentTaskStatus.FAILED
+                    task.last_error = error
+                    task.locked_at = None
                     await metrics.inc("payments_failed_total")
                     await self._write_dlq(session, payment, transaction, error)
                     return
 
                 await metrics.inc("payments_retried_total")
-                backoff_seconds = settings.gateway_backoff_base_seconds * (2 ** (payment.attempts - 1))
+                backoff_seconds = settings.gateway_backoff_base_seconds * (2 ** (task.attempts - 1))
                 backoff_seconds = min(backoff_seconds, settings.gateway_backoff_max_seconds)
                 jitter = random.uniform(0, settings.gateway_backoff_jitter_seconds)
-                payment.status = PaymentStatus.NEW
-                payment.last_error = error
-                payment.locked_at = None
-                payment.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds + jitter)
+                task.status = PaymentTaskStatus.NEW
+                task.last_error = error
+                task.locked_at = None
+                task.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds + jitter)
                 if transaction:
                     transaction.status = TransactionStatus.PROCESSING
 
-    async def _mark_failed(self, payment_id: int, error: str) -> None:
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                payment = await session.get(PaymentModel, payment_id, with_for_update=True)
-                if not payment:
-                    return
-                payment.status = PaymentStatus.FAILED
+                payment.status = PaymentStatus.NEW
                 payment.last_error = error
                 payment.locked_at = None
+                payment.next_retry_at = task.next_retry_at
+                payment.attempts = task.attempts
+
+    async def _mark_failed_task(self, task_id: int, error: str) -> None:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                task = await session.get(PaymentTaskModel, task_id, with_for_update=True)
+                if not task:
+                    return
+                task.status = PaymentTaskStatus.FAILED
+                task.last_error = error
+                task.locked_at = None
+
+                payment = await session.get(PaymentModel, task.payment_id, with_for_update=True)
+                if payment:
+                    payment.status = PaymentStatus.FAILED
+                    payment.last_error = error
+                    payment.locked_at = None
+                    payment.attempts = task.attempts
 
                 transaction = await session.execute(
                     select(TransactionModel)
-                    .where(TransactionModel.payment_id == payment_id)
+                    .where(TransactionModel.payment_id == task.payment_id)
                     .with_for_update()
                 )
                 transaction = transaction.scalar_one_or_none()
                 if transaction:
                     transaction.status = TransactionStatus.FAILED
+
                 await metrics.inc("payments_failed_total")
-                await self._write_dlq(session, payment, transaction, error)
+                if payment:
+                    await self._write_dlq(session, payment, transaction, error)
 
     async def _write_dlq(
         self,

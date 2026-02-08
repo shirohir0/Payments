@@ -5,6 +5,7 @@ from app.domain.exceptions import UserNotFoundError
 from app.infrastructure.db.models.payment import PaymentStatus
 from app.infrastructure.db.models.transaction import TransactionStatus
 from app.core.metrics import metrics
+from app.infrastructure.repositories.payment_task import PaymentTaskRepository
 
 
 class DepositBalanceUseCase:
@@ -49,5 +50,9 @@ class DepositBalanceUseCase:
                 type="deposit",
                 status=TransactionStatus.PROCESSING.value,
             )
+
+            task_repo = PaymentTaskRepository(self.session)
+            await task_repo.create(payment.id)
+            await metrics.inc("payments_task_enqueued_total")
 
         return payment.id
