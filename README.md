@@ -1,159 +1,162 @@
-﻿# Payment Processing Service
+﻿# Payments
 
-Надёжный сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Реализован в стиле Clean Architecture: API > Application > Domain > Infrastructure.
-
-**Статус:** реализованы core‑функции, фоновой воркер, ретраи, health‑check, Docker Compose, idempotency‑key, DLQ, метрики, гарантированная доставка задач и подробная Swagger‑документация.
+Сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Проект построен по Clean Architecture и предназначен для надёжной обработки платежей с ретраями, мониторингом и устойчивостью к сбоям внешнего платёжного шлюза.
 
 ## Возможности
 - Приём платежей (deposit/withdraw) с комиссией 2%.
-- Асинхронная фоновая обработка через воркер.
-- Гарантированная доставка задач (очередь `payment_tasks` в БД).
-- Интеграция с платёжным шлюзом (mock‑gateway с ошибками и таймаутами).
-- Retry с exponential backoff, jitter, max cap и таймаутами.
-- Idempotency‑key для платежей.
+- Асинхронная обработка через воркер (не блокирует API).
+- Гарантированная доставка задач через очередь `payment_tasks` в БД.
+- Retry с exponential backoff, jitter и таймаутами.
+- Idempotency‑key для защиты от повторных запросов.
 - Dead Letter Queue (DLQ) для окончательно неуспешных задач.
-- Метрики (in‑memory).
-- Статус платежа и история транзакций.
-- Health‑check эндпоинт.
-- Docker Compose: запуск одной командой.
-- Подробная Swagger‑документация (описания, response‑модели, теги).
+- Метрики (in‑memory) и health‑check.
+- Swagger/OpenAPI документация.
 
-## Архитектура
-Сервис построен по Clean Architecture:
-- **Domain**: бизнес‑сущности и правила.
-- **Application**: use cases.
-- **Infrastructure**: БД, репозитории, gateway‑клиент.
-- **API**: HTTP‑интерфейс (FastAPI).
-- **Workers**: фоновая обработка платежей.
-
-## Быстрый старт (Docker Compose)
-1. Запуск всех сервисов:
+## Установка
+### 1. Клонирование репозитория
 ```bash
-docker compose up --build
+git clone https://github.com/shirohir0/Payments/
+cd Payments
 ```
+Скачивает репозиторий и переходит в папку проекта.
 
-2. Swagger UI:
-- `http://localhost:8000/docs`
-
-3. Health‑check:
-- `GET /api/v1/health`
-
-## Быстрый старт (локально)
-1. Установить зависимости.
+### 2. Установка зависимостей
 ```bash
 poetry install
 ```
+Создаёт виртуальное окружение и устанавливает зависимости проекта.
 
-2. Настроить `.env`.
+### 3. Настройка переменных окружения
+Создайте файл `.env` на основе `.env.example`.
+
+**Linux/macOS:**
+```bash
+cp .env.example .env
+```
+
+**Windows (PowerShell):**
+```powershell
+Copy-Item .env.example .env
+```
+
+## Запуск
+
+### Запуск всего проекта через Docker Compose
+```bash
+docker compose up --build
+```
+Собирает и запускает API + mock‑gateway + базу данных одной командой.
+
+
+### 1. Запуск базы данных через Docker Compose (Альтернатива).
+```bash
+docker compose up -d db
+```
+Запускает PostgreSQL в фоне.
+
+### 2. Запуск сервиса
+```bash
+uvicorn app.main:app --reload
+```
+Запускает API‑сервис с автоперезагрузкой.
+
+
+
+## Использование
+### Swagger
+Документация доступна по адресу:
+- `http://localhost:8000/docs`
+
+### Примеры запросов (curl)
+**Создать пользователя:**
+```bash
+curl -X POST http://localhost:8000/api/v1/users/ \
+  -H 'Content-Type: application/json' \
+  -d '{"balance": 1000}'
+```
+
+**Пополнение:**
+```bash
+curl -X POST http://localhost:8000/api/v1/payments/deposit \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: 123e4567-e89b-12d3-a456-426614174000' \
+  -d '{"user_id": 1, "deposit": 200}'
+```
+
+**Списание:**
+```bash
+curl -X POST http://localhost:8000/api/v1/payments/withdraw \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id": 1, "amount": 50}'
+```
+
+**Проверка статуса платежа:**
+```bash
+curl http://localhost:8000/api/v1/payments/1
+```
+
+## Скриншоты
+Если есть готовые скриншоты, добавьте их в этот раздел:
+- `image.png`
+- `image-1.png`
+- `image-2.png`
+- `image-3.png`
+- `image-4.png`
+- `image-5.png`
+- `image-6.png`
+
+## Тесты
+```bash
+poetry run pytest -q
+```
+Запускает тесты проекта.
+
+## .env.example
 ```env
+# ===============================
+# Application
+# ===============================
+APP_NAME=Payment Service
+APP_ENV=local
+DEBUG=true
+
+# ===============================
+# Database
+# ===============================
 DATABASE_URL=postgresql+asyncpg://postgres:root@localhost:5432/payments
-PAYMENT_GATEWAY_URL=http://localhost:8000/api/v1/mock-gateway
-TRANSACTION_FEE=2
 AUTO_CREATE_TABLES=true
+
+# ===============================
+# External services
+# ===============================
+PAYMENT_GATEWAY_URL=http://localhost:8000/api/v1/mock-gateway
 GATEWAY_TIMEOUT_SECONDS=1.0
 GATEWAY_MAX_ATTEMPTS=3
 GATEWAY_BACKOFF_BASE_SECONDS=1.0
 GATEWAY_BACKOFF_MAX_SECONDS=30.0
 GATEWAY_BACKOFF_JITTER_SECONDS=0.5
+
+# ===============================
+# Worker
+# ===============================
 WORKER_POLL_INTERVAL_SECONDS=0.5
 WORKER_PROCESSING_TIMEOUT_SECONDS=30.0
+
+# ===============================
+# Logging
+# ===============================
+LOG_LEVEL=INFO
+
+# ===============================
+# Business
+# ===============================
+TRANSACTION_FEE=2
 ```
 
-3. Запустить приложение.
-```bash
-uvicorn app.main:app --reload
-```
-
-4. Документация API.
-- Swagger UI: `http://localhost:8000/docs`
-
-## Основные эндпоинты
-- `POST /api/v1/users/` — создать пользователя.
-- `POST /api/v1/payments/deposit` — пополнение (асинхронно).
-- `POST /api/v1/payments/withdraw` — списание (асинхронно).
-- `GET /api/v1/payments/{payment_id}` — статус платежа.
-- `GET /api/v1/health` — health‑check.
-- `POST /api/v1/mock-gateway/pay` — mock‑gateway (для локального теста).
-- `GET /api/v1/dlq` — список DLQ.
-- `GET /api/v1/metrics` — метрики.
-
-## Swagger‑документация
-Swagger оформлен через response‑модели, описания полей и теги разделов. Полное описание доступно по:
-- `http://localhost:8000/docs`
-
-## Idempotency‑key
-Для защиты от повторных запросов можно передать заголовок:
-```
-Idempotency-Key: <uuid>
-```
-Если ключ уже использовался для этого пользователя, вернётся существующий `payment_id`.
-
-## Dead Letter Queue (DLQ)
-DLQ хранит платежи, которые окончательно провалились:
-- исчерпаны попытки (`gateway_max_attempts`),
-- неретраемая ошибка (4xx, кроме 429),
-- фатальная внутренняя ошибка.
-
-Просмотр:
-```
-GET /api/v1/dlq?limit=50&offset=0
-```
-
-## Метрики
-Метрики хранятся в памяти процесса и показывают количество ключевых событий.
-
-Просмотр:
-```
-GET /api/v1/metrics
-```
-
-## Гарантированная доставка задач
-- Каждому платежу соответствует запись в очереди `payment_tasks`.
-- Воркер берёт задачу через `SELECT ... FOR UPDATE SKIP LOCKED`.
-- При падении воркера задача возвращается в очередь по таймауту.
-- Задача помечается `DONE` только после успешного завершения платежа.
-
-## Фоновая обработка
-- Воркер запускается на старте приложения.
-- Берёт задачи со статусом `NEW` или «зависшие» `PROCESSING`.
-- Выполняет запрос к шлюзу с retry/backoff, jitter и max cap.
-- На успехе обновляет баланс пользователя.
-
-## Поведение при ошибках
-- Ошибки шлюза ретраятся до `GATEWAY_MAX_ATTEMPTS`.
-- Неретраемые 4xx (кроме 429) помечаются как `failed` сразу.
-- Недостаточно средств при списании сохраняется как `failed` с `last_error=insufficient_funds`.
-
-## Модель данных
-Таблицы:
-- `users`: id, balance
-- `payments`: amount, commission, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at, idempotency_key
-- `transactions`: amount, commission, type, status
-- `payment_tasks`: payment_id, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at
-- `payment_dlq`: payment_id, user_id, amount, commission, payment_type, error, attempts, created_at
-
-## Переменные окружения
-- `DATABASE_URL` — строка подключения к Postgres.
-- `PAYMENT_GATEWAY_URL` — URL шлюза.
-- `TRANSACTION_FEE` — комиссия в процентах.
-- `AUTO_CREATE_TABLES` — авто‑создание таблиц при старте.
-- `GATEWAY_TIMEOUT_SECONDS` — таймаут шлюза.
-- `GATEWAY_MAX_ATTEMPTS` — число попыток.
-- `GATEWAY_BACKOFF_BASE_SECONDS` — базовый backoff.
-- `GATEWAY_BACKOFF_MAX_SECONDS` — максимум backoff.
-- `GATEWAY_BACKOFF_JITTER_SECONDS` — джиттер (случайная добавка).
-- `WORKER_POLL_INTERVAL_SECONDS` — частота опроса задач.
-- `WORKER_PROCESSING_TIMEOUT_SECONDS` — таймаут «зависших» задач.
-
-## Надёжность
-- Каждому платежу соответствует запись в БД и в очереди задач.
-- Обработка платежа атомарна: баланс, платёж, транзакция и задача обновляются в одной транзакции.
-- Повторы при сбоях шлюза с backoff и jitter, 4xx (кроме 429) без ретраев.
-- Статус платежа доступен всегда.
-
-## TODO (следующие шаги)
+## Что планируется добавить
 - Кэширование балансов.
-- Вынести метрики в Prometheus/StatsD (если нужно хранить после рестартов).
+- Вынести метрики в Prometheus/StatsD (если нужна долговременная история).
+- Автоматические миграции БД (при использовании Alembic).
 
 ## Лицензия
 MIT
