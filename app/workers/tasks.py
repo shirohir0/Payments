@@ -11,11 +11,21 @@ from app.workers.payment_processor import PaymentProcessor
 
 logger = logging.getLogger("payments_task")
 
+_worker_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _run_async(coro):
+    global _worker_loop
+    if _worker_loop is None:
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+    return _worker_loop.run_until_complete(coro)
+
 
 @celery_app.task(bind=True, name="payments.process", max_retries=10)
 def process_payment(self, payment_id: int) -> str:
     processor = PaymentProcessor()
-    result = asyncio.run(processor.process(payment_id))
+    result = _run_async(processor.process(payment_id))
 
     if result == "retry":
         # exponential backoff based on celery retry count

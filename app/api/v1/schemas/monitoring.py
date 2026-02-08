@@ -1,4 +1,5 @@
-﻿from typing import Optional
+﻿from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -17,7 +18,7 @@ class DlqItemResponse(BaseModel):
     payment_type: str
     error: str
     attempts: int
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 class MetricsResponse(RootModel[dict[str, int]]):
