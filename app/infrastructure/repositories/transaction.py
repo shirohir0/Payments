@@ -1,4 +1,4 @@
-from infrastructure.db.models.transaction import TransactionModel, TransactionType, TransactionStatus
+from app.infrastructure.db.models.transaction import TransactionModel, TransactionType, TransactionStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 

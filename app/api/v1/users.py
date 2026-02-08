@@ -1,9 +1,9 @@
 from fastapi import APIRouter
 
-from api.v1.schemas.users import CreateUserSchema
-from infrastructure.repositories.user import UserRepository
-from application.use_cases.create_user import CreateUserUseCase
-from infrastructure.db.session import session_depends
+from app.api.v1.schemas.users import CreateUserSchema
+from app.infrastructure.repositories.user import UserRepository
+from app.application.use_cases.create_user import CreateUserUseCase
+from app.infrastructure.db.session import session_depends
 
 router = APIRouter(prefix="/users", tags=["Users"])
 

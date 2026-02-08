@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from core.settings import settings
+from app.core.settings import settings
 
 
 @dataclass

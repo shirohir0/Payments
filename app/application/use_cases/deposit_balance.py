@@ -1,9 +1,9 @@
-from application.dto.payment import DepositDTO
-from core.settings import settings
-from domain.entities.user import User
-from domain.exceptions import UserNotFoundError
-from infrastructure.db.models.payment import PaymentStatus
-from infrastructure.db.models.transaction import TransactionStatus
+from app.application.dto.payment import DepositDTO
+from app.core.settings import settings
+from app.domain.entities.user import User
+from app.domain.exceptions import UserNotFoundError
+from app.infrastructure.db.models.payment import PaymentStatus
+from app.infrastructure.db.models.transaction import TransactionStatus
 
 
 class DepositBalanceUseCase:

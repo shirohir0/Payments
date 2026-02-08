@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from infrastructure.db.base import Base
+from app.infrastructure.db.base import Base
 
 class PaymentStatus(PyEnum):
     NEW = "new"

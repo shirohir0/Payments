@@ -1,11 +1,11 @@
-from api.middleware.db_errors import DBExceptionMiddleware
-from api.v1 import router
-from core.settings import settings
+from app.api.middleware.db_errors import DBExceptionMiddleware
+from app.api.v1 import router
+from app.core.settings import settings
 from fastapi import FastAPI
 
-from infrastructure.db.base import Base
-from infrastructure.db.session import engine
-from workers.payment_worker import PaymentWorker
+from app.infrastructure.db.base import Base
+from app.infrastructure.db.session import engine
+from app.workers.payment_worker import PaymentWorker
 
 app = FastAPI(
     title=settings.app_name,

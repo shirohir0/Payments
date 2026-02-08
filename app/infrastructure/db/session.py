@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import (
 from typing import Annotated
 from fastapi import Depends
 
-from core.settings import settings
+from app.core.settings import settings
 
 engine = create_async_engine(
     settings.database_url,

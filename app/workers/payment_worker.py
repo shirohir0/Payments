@@ -8,12 +8,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.settings import settings
-from infrastructure.db.models.payment import PaymentModel, PaymentStatus
-from infrastructure.db.models.transaction import TransactionModel, TransactionStatus, TransactionType
-from infrastructure.db.models.user import UserModel
-from infrastructure.db.session import AsyncSessionLocal
-from infrastructure.payment_gateway.http import PaymentGatewayClient
+from app.core.settings import settings
+from app.infrastructure.db.models.payment import PaymentModel, PaymentStatus
+from app.infrastructure.db.models.transaction import TransactionModel, TransactionStatus, TransactionType
+from app.infrastructure.db.models.user import UserModel
+from app.infrastructure.db.session import AsyncSessionLocal
+from app.infrastructure.payment_gateway.http import PaymentGatewayClient
 
 logger = logging.getLogger("payment_worker")
 

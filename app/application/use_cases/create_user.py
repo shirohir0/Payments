@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from domain.entities.user import User
-from infrastructure.repositories.user import UserRepository
+from app.domain.entities.user import User
+from app.infrastructure.repositories.user import UserRepository
 
 
 class CreateUserUseCase:

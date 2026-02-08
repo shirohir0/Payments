@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from domain.entities.user import User
-from infrastructure.db.models.payment import PaymentModel
+from app.domain.entities.user import User
+from app.infrastructure.db.models.payment import PaymentModel
 
 class IUserRepository(ABC):
     @abstractmethod

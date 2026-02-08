@@ -1,0 +1,47 @@
+﻿services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5432:5432"
+    volumes:
+      - payments_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payments"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:root@db:5432/payments
+      PAYMENT_GATEWAY_URL: http://mock-gateway:8001/mock-gateway
+      TRANSACTION_FEE: 2
+      AUTO_CREATE_TABLES: "true"
+      GATEWAY_TIMEOUT_SECONDS: 1.0
+      GATEWAY_MAX_ATTEMPTS: 3
+      GATEWAY_BACKOFF_BASE_SECONDS: 1.0
+      GATEWAY_BACKOFF_MAX_SECONDS: 30.0
+      GATEWAY_BACKOFF_JITTER_SECONDS: 0.5
+      WORKER_POLL_INTERVAL_SECONDS: 0.5
+      WORKER_PROCESSING_TIMEOUT_SECONDS: 30.0
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  mock-gateway:
+    build: .
+    environment:
+      GATEWAY_TIMEOUT_SECONDS: 1.0
+    command: ["uvicorn", "app.mock_gateway_app:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+
+volumes:
+  payments_db:

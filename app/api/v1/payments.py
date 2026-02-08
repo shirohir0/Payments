@@ -1,13 +1,13 @@
 from fastapi import APIRouter, HTTPException
-from infrastructure.db.session import session_depends
-from application.dto.payment import DepositDTO
-from application.use_cases.deposit_balance import DepositBalanceUseCase
-from infrastructure.repositories.user import UserRepository
-from infrastructure.repositories.payment import PaymentRepository
-from infrastructure.repositories.transaction import TransactionRepository
-from application.dto.payment import WithdrawDTO
-from application.use_cases.withdraw_balance import WithdrawBalanceUseCase
-from api.v1.schemas.payment import DepositRequestSchema, WithdrawRequestSchema
+from app.infrastructure.db.session import session_depends
+from app.application.dto.payment import DepositDTO
+from app.application.use_cases.deposit_balance import DepositBalanceUseCase
+from app.infrastructure.repositories.user import UserRepository
+from app.infrastructure.repositories.payment import PaymentRepository
+from app.infrastructure.repositories.transaction import TransactionRepository
+from app.application.dto.payment import WithdrawDTO
+from app.application.use_cases.withdraw_balance import WithdrawBalanceUseCase
+from app.api.v1.schemas.payment import DepositRequestSchema, WithdrawRequestSchema
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 

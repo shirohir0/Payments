@@ -1,4 +1,4 @@
-from infrastructure.db.models.payment import PaymentModel, PaymentStatus
+from app.infrastructure.db.models.payment import PaymentModel, PaymentStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 

@@ -1,7 +1,7 @@
 from sqlalchemy import BigInteger, Numeric
 from sqlalchemy.orm import Mapped, mapped_column
 
-from infrastructure.db.base import Base
+from app.infrastructure.db.base import Base
 
 class UserModel(Base):
     __tablename__ = "users"

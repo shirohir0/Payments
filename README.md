@@ -2,23 +2,36 @@
 
 Надёжный сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Реализован в стиле Clean Architecture: API > Application > Domain > Infrastructure.
 
-**Статус:** готов для локального запуска, фоновой обработки, ретраев и проверки статусов платежей.
+**Статус:** реализованы core-функции, фоновой воркер, ретраи, health‑check и Docker Compose (Postgres + API + отдельный mock‑gateway).
 
 ## Возможности
 - Приём платежей (deposit/withdraw) с комиссией 2%.
 - Асинхронная фоновая обработка через воркер.
-- Интеграция с платёжным шлюзом (mock-gateway с ошибками и таймаутами).
+- Интеграция с платёжным шлюзом (mock‑gateway с ошибками и таймаутами).
 - Retry с exponential backoff, jitter, max cap и таймаутами.
 - Статус платежа и история транзакций.
-- Health-check эндпоинт готов к добавлению (см. раздел TODO).
+- Health‑check эндпоинт.
+- Docker Compose: запуск одной командой.
 
 ## Архитектура
 Сервис построен по Clean Architecture:
-- **Domain**: бизнес-сущности и правила.
+- **Domain**: бизнес‑сущности и правила.
 - **Application**: use cases.
-- **Infrastructure**: БД, репозитории, gateway-клиент.
-- **API**: HTTP-интерфейс (FastAPI).
+- **Infrastructure**: БД, репозитории, gateway‑клиент.
+- **API**: HTTP‑интерфейс (FastAPI).
 - **Workers**: фоновая обработка платежей.
+
+## Быстрый старт (Docker Compose)
+1. Запуск всех сервисов:
+```bash
+docker compose up --build
+```
+
+2. Swagger UI:
+- `http://localhost:8000/docs`
+
+3. Health‑check:
+- `GET /api/v1/health`
 
 ## Быстрый старт (локально)
 1. Установить зависимости.
@@ -54,7 +67,8 @@ uvicorn app.main:app --reload
 - `POST /api/v1/payments/deposit` — пополнение (асинхронно).
 - `POST /api/v1/payments/withdraw` — списание (асинхронно).
 - `GET /api/v1/payments/{payment_id}` — статус платежа.
-- `POST /api/v1/mock-gateway/pay` — mock шлюз (для тестов).
+- `GET /api/v1/health` — health‑check.
+- `POST /api/v1/mock-gateway/pay` — mock‑gateway (для локального теста).
 
 ## Пример сценария
 1. Создать пользователя:
@@ -82,17 +96,22 @@ curl http://localhost:8000/api/v1/payments/1
 - Выполняет запрос к шлюзу с retry/backoff, jitter и max cap.
 - На успехе обновляет баланс пользователя.
 
+## Поведение при ошибках
+- Ошибки шлюза ретраятся до `GATEWAY_MAX_ATTEMPTS`.
+- Неретраемые 4xx (кроме 429) помечаются как `failed` сразу.
+- Недостаточно средств при списании сохраняется как `failed` с `last_error=insufficient_funds`.
+
 ## Модель данных
 Таблицы:
 - `users`: id, balance
-- `payments`: amount, commission, status, attempts, last_error, next_retry_at
+- `payments`: amount, commission, status, attempts, last_error, next_retry_at, locked_at, created_at, updated_at
 - `transactions`: amount, commission, type, status
 
 ## Переменные окружения
 - `DATABASE_URL` — строка подключения к Postgres.
 - `PAYMENT_GATEWAY_URL` — URL шлюза.
 - `TRANSACTION_FEE` — комиссия в процентах.
-- `AUTO_CREATE_TABLES` — авто-создание таблиц при старте.
+- `AUTO_CREATE_TABLES` — авто‑создание таблиц при старте.
 - `GATEWAY_TIMEOUT_SECONDS` — таймаут шлюза.
 - `GATEWAY_MAX_ATTEMPTS` — число попыток.
 - `GATEWAY_BACKOFF_BASE_SECONDS` — базовый backoff.
@@ -107,10 +126,8 @@ curl http://localhost:8000/api/v1/payments/1
 - Статус платежа доступен всегда.
 
 ## TODO (следующие шаги)
-- Health-check эндпоинт с проверкой БД.
-- Docker Compose и отдельный mock-gateway сервис.
 - Idempotency keys.
-- DLQ для окончательно неуспешных задач.
+- Dead Letter Queue для окончательно неуспешных задач.
 - Метрики.
 - Кэширование балансов.
 

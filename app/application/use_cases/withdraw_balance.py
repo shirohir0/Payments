@@ -1,9 +1,9 @@
-from application.dto.payment import WithdrawDTO
-from core.settings import settings
-from domain.entities.user import User
-from domain.exceptions import UserInsufficientFundsError, UserNotFoundError
-from infrastructure.db.models.payment import PaymentStatus
-from infrastructure.db.models.transaction import TransactionStatus
+from app.application.dto.payment import WithdrawDTO
+from app.core.settings import settings
+from app.domain.entities.user import User
+from app.domain.exceptions import UserInsufficientFundsError, UserNotFoundError
+from app.infrastructure.db.models.payment import PaymentStatus
+from app.infrastructure.db.models.transaction import TransactionStatus
 
 
 class WithdrawBalanceUseCase:

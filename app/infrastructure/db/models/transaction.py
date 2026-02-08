@@ -2,7 +2,7 @@ from enum import Enum as PyEnum
 from typing import Optional
 from sqlalchemy import ForeignKey, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from infrastructure.db.base import Base
+from app.infrastructure.db.base import Base
 
 class TransactionType(PyEnum):
     DEPOSIT = "deposit"
