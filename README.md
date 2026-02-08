@@ -40,15 +40,7 @@ Copy-Item .env.example .env
 ```
 
 ## Запуск
-
-### Запуск всего проекта через Docker Compose
-```bash
-docker compose up --build
-```
-Собирает и запускает API + mock‑gateway + базу данных одной командой.
-
-
-### 1. Запуск базы данных через Docker Compose (Альтернатива).
+### 1. Запуск базы данных через Docker Compose
 ```bash
 docker compose up -d db
 ```
@@ -60,7 +52,11 @@ uvicorn app.main:app --reload
 ```
 Запускает API‑сервис с автоперезагрузкой.
 
-
+### Альтернатива: запуск всего проекта через Docker Compose
+```bash
+docker compose up --build
+```
+Собирает и запускает API + mock‑gateway + базу данных одной командой.
 
 ## Использование
 ### Swagger
@@ -96,14 +92,13 @@ curl http://localhost:8000/api/v1/payments/1
 ```
 
 ## Скриншоты
-Если есть готовые скриншоты, добавьте их в этот раздел:
-- `image.png`
-- `image-1.png`
-- `image-2.png`
-- `image-3.png`
-- `image-4.png`
-- `image-5.png`
-- `image-6.png`
+![Запуск сервиса](image.png)
+![Swagger UI](image-1.png)
+![Swagger UI](image-2.png)
+![Пример запроса](image-3.png)
+![Пример запроса](image-4.png)
+![Пример запроса](image-5.png)
+![Пример запроса](image-6.png)
 
 ## Тесты
 ```bash
@@ -156,7 +151,7 @@ TRANSACTION_FEE=2
 ## Что планируется добавить
 - Кэширование балансов.
 - Вынести метрики в Prometheus/StatsD (если нужна долговременная история).
-- Автоматические миграции БД (при использовании Alembic).
+- Автоматические миграции БД (по желанию, если решите использовать Alembic).
 
 ## Лицензия
 MIT
