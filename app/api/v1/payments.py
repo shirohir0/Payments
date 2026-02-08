@@ -8,6 +8,7 @@ from app.infrastructure.repositories.transaction import TransactionRepository
 from app.application.dto.payment import WithdrawDTO
 from app.application.use_cases.withdraw_balance import WithdrawBalanceUseCase
 from app.api.v1.schemas.payment import DepositRequestSchema, WithdrawRequestSchema
+from app.core.metrics import metrics
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -24,6 +25,7 @@ async def payments_deposit(
     use_case = DepositBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
 
     try:
+        await metrics.inc("payments_deposit_requests_total")
         payment_id: int = await use_case.execute(
             DepositDTO(user_id=data.user_id, amount=data.deposit, idempotency_key=idempotency_key)
         )
@@ -48,6 +50,7 @@ async def payments_withdraw(
     use_case = WithdrawBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
 
     try:
+        await metrics.inc("payments_withdraw_requests_total")
         payment_id: int = await use_case.execute(
             WithdrawDTO(user_id=data.user_id, amount=data.amount, idempotency_key=idempotency_key)
         )

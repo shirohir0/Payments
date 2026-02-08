@@ -4,6 +4,7 @@ from app.domain.entities.user import User
 from app.domain.exceptions import UserNotFoundError
 from app.infrastructure.db.models.payment import PaymentStatus
 from app.infrastructure.db.models.transaction import TransactionStatus
+from app.core.metrics import metrics
 
 
 class DepositBalanceUseCase:
@@ -25,6 +26,7 @@ class DepositBalanceUseCase:
                     key=dto.idempotency_key,
                 )
                 if existing:
+                    await metrics.inc("idempotency_hits_total")
                     return existing.id
 
             dto.commission = round(dto.amount * settings.transaction_fee, 2)

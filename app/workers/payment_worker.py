@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import logging
@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.metrics import metrics
 from app.core.settings import settings
 from app.infrastructure.db.models.payment import PaymentModel, PaymentStatus
 from app.infrastructure.db.models.transaction import TransactionModel, TransactionStatus, TransactionType
@@ -85,6 +86,7 @@ class PaymentWorker:
                 payment.locked_at = now
                 payment.next_retry_at = None
                 await session.flush()
+                await metrics.inc("payments_processing_started_total")
 
                 return payment.id
 
@@ -96,12 +98,18 @@ class PaymentWorker:
 
         response = await self.gateway.charge(payload)
         if response.success:
+            await metrics.inc("gateway_success_total")
             await self._apply_success(payment_id)
             return
 
         if response.retryable:
+            if response.error == "timeout":
+                await metrics.inc("gateway_timeouts_total")
+            else:
+                await metrics.inc("gateway_errors_total")
             await self._apply_failure(payment_id, response.error or "gateway_error")
         else:
+            await metrics.inc("gateway_non_retryable_errors_total")
             await self._mark_failed(payment_id, response.error or "gateway_error")
 
     async def _build_payload(self, payment_id: int) -> dict[str, object] | None:
@@ -142,6 +150,8 @@ class PaymentWorker:
                     payment.status = PaymentStatus.FAILED
                     payment.last_error = "missing_transaction"
                     payment.locked_at = None
+                    await metrics.inc("payments_failed_total")
+                    await self._write_dlq(session, payment, transaction, "missing_transaction")
                     return
 
                 user = await session.get(UserModel, payment.user_id, with_for_update=True)
@@ -150,6 +160,8 @@ class PaymentWorker:
                     payment.last_error = "missing_user"
                     payment.locked_at = None
                     transaction.status = TransactionStatus.FAILED
+                    await metrics.inc("payments_failed_total")
+                    await self._write_dlq(session, payment, transaction, "missing_user")
                     return
 
                 if transaction.type == TransactionType.DEPOSIT:
@@ -162,6 +174,8 @@ class PaymentWorker:
                         payment.last_error = "insufficient_funds"
                         payment.locked_at = None
                         transaction.status = TransactionStatus.FAILED
+                        await metrics.inc("payments_failed_total")
+                        await self._write_dlq(session, payment, transaction, "insufficient_funds")
                         return
                     user.balance = float(user.balance) - total_amount
 
@@ -170,6 +184,7 @@ class PaymentWorker:
                 payment.locked_at = None
                 payment.next_retry_at = None
                 transaction.status = TransactionStatus.SUCCESS
+                await metrics.inc("payments_success_total")
 
     async def _apply_failure(self, payment_id: int, error: str) -> None:
         async with AsyncSessionLocal() as session:
@@ -191,9 +206,11 @@ class PaymentWorker:
                     payment.locked_at = None
                     if transaction:
                         transaction.status = TransactionStatus.FAILED
+                    await metrics.inc("payments_failed_total")
                     await self._write_dlq(session, payment, transaction, error)
                     return
 
+                await metrics.inc("payments_retried_total")
                 backoff_seconds = settings.gateway_backoff_base_seconds * (2 ** (payment.attempts - 1))
                 backoff_seconds = min(backoff_seconds, settings.gateway_backoff_max_seconds)
                 jitter = random.uniform(0, settings.gateway_backoff_jitter_seconds)
@@ -222,6 +239,7 @@ class PaymentWorker:
                 transaction = transaction.scalar_one_or_none()
                 if transaction:
                     transaction.status = TransactionStatus.FAILED
+                await metrics.inc("payments_failed_total")
                 await self._write_dlq(session, payment, transaction, error)
 
     async def _write_dlq(
@@ -246,3 +264,4 @@ class PaymentWorker:
             error=error,
             attempts=payment.attempts,
         )
+        await metrics.inc("dlq_written_total")
