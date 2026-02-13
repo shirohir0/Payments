@@ -59,7 +59,7 @@ docker compose up --build
 1. Запустить PostgreSQL и RabbitMQ отдельно.
 2. Запустить API:
 ```bash
-uvicorn app.main:app --reload
+poetry run uvicorn app.main:app --reload
 ```
 3. Запустить worker:
 
@@ -71,6 +71,17 @@ celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
 **Windows (PowerShell):**
 ```powershell
 poetry run celery -A app.workers.celery_app.celery_app worker --loglevel=INFO -P solo
+```
+
+### Проверка после старта
+- Health-check: `http://localhost:8000/api/v1/health`
+- Метрики: `http://localhost:8000/api/v1/metrics`
+- Dead Letter Queue: `http://localhost:8000/api/v1/dlq`
+
+Если после изменений в схеме БД сервис стартует некорректно, выполните чистый запуск:
+```bash
+docker compose down -v
+docker compose up --build
 ```
 
 ## Использование
@@ -93,6 +104,8 @@ curl -X POST http://localhost:8000/api/v1/payments/deposit \
   -H 'Idempotency-Key: 123e4567-e89b-12d3-a456-426614174000' \
   -d '{"user_id": 1, "deposit": 200}'
 ```
+
+Если `Idempotency-Key` не передан, каждый запрос считается новым платежом.
 
 **Списание:**
 ```bash
@@ -120,6 +133,11 @@ curl http://localhost:8000/api/v1/payments/1
 poetry run pytest -q
 ```
 Запускает тесты проекта.
+
+Запуск тестов в Docker:
+```bash
+docker compose run --rm tests
+```
 
 ## .env.example
 ```env
