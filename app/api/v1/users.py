@@ -1,9 +1,10 @@
-﻿from fastapi import APIRouter
+﻿from typing import Annotated
+
+from fastapi import APIRouter, Depends
 
 from app.api.v1.schemas.users import CreateUserSchema, UserResponseSchema
-from app.infrastructure.repositories.user import UserRepository
 from app.application.use_cases.create_user import CreateUserUseCase
-from app.infrastructure.db.session import session_depends
+from app.core.dependencies import get_create_user_use_case
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -11,11 +12,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 @router.post("/", summary="Создать пользователя", response_model=UserResponseSchema)
 async def create_user(
     data: CreateUserSchema,
-    session: session_depends,
+    use_case: Annotated[CreateUserUseCase, Depends(get_create_user_use_case)],
 ):
-    repo = UserRepository(session)
-    use_case = CreateUserUseCase(session, repo)
-
     user = await use_case.execute(data.balance)
-
     return user

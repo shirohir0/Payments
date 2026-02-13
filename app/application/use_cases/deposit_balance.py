@@ -1,11 +1,16 @@
+import logging
+
 from app.application.dto.payment import DepositDTO
+from app.core.metrics import metrics
 from app.core.settings import settings
 from app.domain.entities.user import User
 from app.domain.exceptions import UserNotFoundError
 from app.infrastructure.db.models.payment import PaymentStatus
 from app.infrastructure.db.models.transaction import TransactionStatus
-from app.core.metrics import metrics
 from app.workers.queue import enqueue_payment
+
+
+logger = logging.getLogger("usecase.deposit")
 
 
 class DepositBalanceUseCase:
@@ -18,7 +23,6 @@ class DepositBalanceUseCase:
     async def execute(self, dto: DepositDTO) -> int:
         payment_id: int | None = None
         async with self.session.begin():
-            logger = __import__("logging").getLogger("usecase.deposit")
             user: User | None = await self.user_repo.get_by_id(dto.user_id)
             if not user:
                 raise UserNotFoundError(f"User {dto.user_id} not found")

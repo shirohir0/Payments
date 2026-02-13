@@ -45,6 +45,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 Собирает и запускает одной командой:
+- `migrate` (автоматический `alembic upgrade head`)
 - `api`
 - `worker`
 - `rabbitmq`
@@ -130,15 +131,20 @@ APP_ENV=local
 DEBUG=true
 
 # ===============================
-# Database
+# Database / Postgres
 # ===============================
+POSTGRES_DB=payments
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=root
 DATABASE_URL=postgresql+asyncpg://postgres:root@localhost:5432/payments
-AUTO_CREATE_TABLES=true
+DOCKER_DATABASE_URL=postgresql+asyncpg://postgres:root@db:5432/payments
+AUTO_CREATE_TABLES=false
 
 # ===============================
 # External services
 # ===============================
 PAYMENT_GATEWAY_URL=http://localhost:8000/api/v1/mock-gateway
+DOCKER_PAYMENT_GATEWAY_URL=http://mock-gateway:8001/mock-gateway
 GATEWAY_TIMEOUT_SECONDS=1.0
 GATEWAY_MAX_ATTEMPTS=3
 GATEWAY_BACKOFF_BASE_SECONDS=1.0
@@ -149,6 +155,7 @@ GATEWAY_BACKOFF_JITTER_SECONDS=0.5
 # Queue (RabbitMQ / Celery)
 # ===============================
 CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
+DOCKER_CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
 CELERY_RESULT_BACKEND=rpc://
 CELERY_TASK_TIME_LIMIT_SECONDS=30
 CELERY_TASK_SOFT_TIME_LIMIT_SECONDS=25

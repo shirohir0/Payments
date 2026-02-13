@@ -47,7 +47,11 @@ class PaymentModel(Base):
     )
 
     status: Mapped[PaymentStatus] = mapped_column(
-        Enum(PaymentStatus),
+        Enum(
+            PaymentStatus,
+            name="paymentstatus",
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
         default=PaymentStatus.NEW,
         nullable=False,
     )

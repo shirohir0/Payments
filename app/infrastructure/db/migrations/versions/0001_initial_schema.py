@@ -1,12 +1,13 @@
 ﻿"""initial_schema
 
 Revision ID: 0001_initial
-Revises: 
+Revises:
 Create Date: 2026-02-08 00:00:00
 """
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "0001_initial"
@@ -16,19 +17,68 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Создаём базовую таблицу пользователей.
     op.create_table(
         "users",
         sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("balance", sa.Numeric(12, 2), nullable=False, server_default="0"),
     )
 
-    payment_status_enum = sa.Enum("new", "processing", "success", "failed", name="paymentstatus")
-    transaction_type_enum = sa.Enum("deposit", "withdraw", name="transactiontype")
-    transaction_status_enum = sa.Enum("success", "failed", "processing", name="transactionstatus")
+    # Типы ENUM для платежей и транзакций.
+    # Используем idempotent-DDL в Postgres через PL/pgSQL‑блоки,
+    # чтобы миграция не падала, если тип уже существует.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'paymentstatus') THEN
+                CREATE TYPE paymentstatus AS ENUM ('new', 'processing', 'success', 'failed');
+            END IF;
+        END $$;
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'transactiontype') THEN
+                CREATE TYPE transactiontype AS ENUM ('deposit', 'withdraw');
+            END IF;
+        END $$;
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'transactionstatus') THEN
+                CREATE TYPE transactionstatus AS ENUM ('success', 'failed', 'processing');
+            END IF;
+        END $$;
+        """
+    )
 
-    payment_status_enum.create(op.get_bind(), checkfirst=True)
-    transaction_type_enum.create(op.get_bind(), checkfirst=True)
-    transaction_status_enum.create(op.get_bind(), checkfirst=True)
+    payment_status_enum_no_create = postgresql.ENUM(
+        "new",
+        "processing",
+        "success",
+        "failed",
+        name="paymentstatus",
+        create_type=False,
+    )
+    transaction_type_enum_no_create = postgresql.ENUM(
+        "deposit",
+        "withdraw",
+        name="transactiontype",
+        create_type=False,
+    )
+    transaction_status_enum_no_create = postgresql.ENUM(
+        "success",
+        "failed",
+        "processing",
+        name="transactionstatus",
+        create_type=False,
+    )
 
     op.create_table(
         "payments",
@@ -36,7 +86,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("amount", sa.Numeric(12, 2), nullable=False),
         sa.Column("commission", sa.Numeric(12, 2), nullable=False),
-        sa.Column("status", payment_status_enum, nullable=False, server_default="new"),
+        sa.Column("status", payment_status_enum_no_create, nullable=False, server_default="new"),
         sa.Column("idempotency_key", sa.String(length=64), nullable=True),
         sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("last_error", sa.String(length=500), nullable=True),
@@ -54,8 +104,8 @@ def upgrade() -> None:
         sa.Column("payment_id", sa.Integer(), sa.ForeignKey("payments.id", ondelete="SET NULL"), nullable=True),
         sa.Column("amount", sa.Numeric(12, 2), nullable=False),
         sa.Column("commission", sa.Numeric(12, 2), nullable=False),
-        sa.Column("type", transaction_type_enum, nullable=False),
-        sa.Column("status", transaction_status_enum, nullable=False),
+        sa.Column("type", transaction_type_enum_no_create, nullable=False),
+        sa.Column("status", transaction_status_enum_no_create, nullable=False),
     )
 
 

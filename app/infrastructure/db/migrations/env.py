@@ -52,16 +52,17 @@ async def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(
-            lambda sync_conn: context.configure(
-                connection=sync_conn,
-                target_metadata=target_metadata,
-                compare_type=True,
-            )
+    def do_run_migrations(sync_conn):
+        context.configure(
+            connection=sync_conn,
+            target_metadata=target_metadata,
+            compare_type=True,
         )
+        with context.begin_transaction():
+            context.run_migrations()
 
-        await connection.run_sync(lambda sync_conn: context.run_migrations())
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()
 

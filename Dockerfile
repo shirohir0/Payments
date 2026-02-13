@@ -3,27 +3,25 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_NO_INTERACTION=1
 
 WORKDIR /app
 
-# System deps (minimal)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get install -y --no-install-recommends build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml poetry.lock ./
-
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir \
-        "fastapi[standard]>=0.128.4,<0.129.0" \
-        "sqlalchemy>=2.0.46,<3.0.0" \
-        "pydantic-settings>=2.12.0,<3.0.0" \
-        "asyncpg>=0.31.0,<0.32.0" \
-        "httpx>=0.27.0,<1.0.0" \
-        "celery>=5.4.0,<6.0.0"
+    && pip install --no-cache-dir poetry
+
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --no-root
 
 COPY app ./app
+COPY tests ./tests
+COPY alembic.ini ./
 
 EXPOSE 8000
 
