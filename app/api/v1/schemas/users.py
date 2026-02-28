@@ -1,10 +1,16 @@
-﻿from pydantic import BaseModel, Field
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.api.v1.schemas.payment import NonnegativeMoney
 
 
 class CreateUserSchema(BaseModel):
-    balance: float = Field(ge=0, description="Стартовый баланс")
+    model_config = ConfigDict(extra="forbid")
+    balance: NonnegativeMoney = Field(description="Initial balance")
 
 
 class UserResponseSchema(BaseModel):
     id: int
-    balance: float
+    balance: Decimal
+    reserved_balance: Decimal = Decimal("0.00")

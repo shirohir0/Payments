@@ -1,16 +1,22 @@
-﻿# application/dto/deposit_dto.py
 from dataclasses import dataclass
+from decimal import Decimal
+
+from app.domain.money import ZERO, idempotency_key, money
+
 
 @dataclass
 class DepositDTO:
     user_id: int
-    amount: float
-    commission: float = 0.0  # комиссия по умолчанию
+    amount: Decimal
+    commission: Decimal = ZERO
     idempotency_key: str | None = None
 
+    def __post_init__(self) -> None:
+        self.amount = money(self.amount, positive=True)
+        self.commission = money(self.commission)
+        self.idempotency_key = idempotency_key(self.idempotency_key)
+
+
 @dataclass
-class WithdrawDTO:
-    user_id: int
-    amount: float
-    commission: float = 0.0
-    idempotency_key: str | None = None
+class WithdrawDTO(DepositDTO):
+    pass

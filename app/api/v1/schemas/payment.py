@@ -1,32 +1,48 @@
-﻿from typing import Literal, Optional
+from decimal import Decimal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, PositiveFloat
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+
+from app.domain.money import money
+
+PositiveMoney = Annotated[
+    Decimal,
+    BeforeValidator(lambda value: money(value, positive=True)),
+    Field(gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False),
+]
+NonnegativeMoney = Annotated[
+    Decimal,
+    BeforeValidator(money),
+    Field(ge=0, max_digits=12, decimal_places=2, allow_inf_nan=False),
+]
 
 
 class DepositRequestSchema(BaseModel):
-    user_id: int = Field(..., gt=0, description="ID пользователя")
-    deposit: PositiveFloat = Field(..., description="Сумма пополнения (> 0)")
+    model_config = ConfigDict(extra="forbid")
+    user_id: int = Field(gt=0, description="User ID")
+    deposit: PositiveMoney = Field(description="Deposit amount; at most two decimal places")
 
 
 class WithdrawRequestSchema(BaseModel):
-    user_id: int = Field(..., gt=0, description="ID пользователя")
-    amount: PositiveFloat = Field(..., description="Сумма списания (> 0)")
+    model_config = ConfigDict(extra="forbid")
+    user_id: int = Field(gt=0, description="User ID")
+    amount: PositiveMoney = Field(description="Withdrawal amount; at most two decimal places")
 
 
 class PaymentCreateResponse(BaseModel):
-    payment_id: int = Field(..., description="ID созданного платежа")
-    user_id: int = Field(..., description="ID пользователя")
-    status: Literal["processing", "success", "failed"] = Field(..., description="Текущий статус")
-    deposit: Optional[float] = Field(default=None, description="Сумма пополнения, если это deposit")
-    withdraw: Optional[float] = Field(default=None, description="Сумма списания, если это withdraw")
+    payment_id: int
+    user_id: int
+    status: Literal["new", "processing", "success", "failed"]
+    deposit: Decimal | None = None
+    withdraw: Decimal | None = None
 
 
 class PaymentStatusResponse(BaseModel):
     payment_id: int
     user_id: int
-    amount: float
-    commission: float
+    amount: Decimal
+    commission: Decimal
     status: Literal["new", "processing", "success", "failed"]
     attempts: int
-    last_error: Optional[str] = None
-    transaction_status: Optional[Literal["success", "failed", "processing"]] = None
+    last_error: str | None = None
+    transaction_status: Literal["success", "failed", "processing"] | None = None
