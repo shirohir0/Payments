@@ -1,12 +1,12 @@
-﻿"""initial_schema
+"""initial_schema
 
 Revision ID: 0001_initial
 Revises:
 Create Date: 2026-02-08 00:00:00
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -83,7 +83,12 @@ def upgrade() -> None:
     op.create_table(
         "payments",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.BigInteger(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id",
+            sa.BigInteger(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("amount", sa.Numeric(12, 2), nullable=False),
         sa.Column("commission", sa.Numeric(12, 2), nullable=False),
         sa.Column("status", payment_status_enum_no_create, nullable=False, server_default="new"),
@@ -92,16 +97,36 @@ def upgrade() -> None:
         sa.Column("last_error", sa.String(length=500), nullable=True),
         sa.Column("next_retry_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("locked_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.UniqueConstraint("user_id", "idempotency_key", name="uq_payments_user_idempotency_key"),
     )
 
     op.create_table(
         "transactions",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.BigInteger(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("payment_id", sa.Integer(), sa.ForeignKey("payments.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "user_id",
+            sa.BigInteger(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "payment_id",
+            sa.Integer(),
+            sa.ForeignKey("payments.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("amount", sa.Numeric(12, 2), nullable=False),
         sa.Column("commission", sa.Numeric(12, 2), nullable=False),
         sa.Column("type", transaction_type_enum_no_create, nullable=False),

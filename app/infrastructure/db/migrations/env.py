@@ -1,18 +1,18 @@
-﻿import asyncio
-from logging.config import fileConfig
+import asyncio
 import os
 import sys
+from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Add project root to path
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 sys.path.append(BASE_DIR)
 
-from app.infrastructure.db.base import Base  # noqa: E402
 from app.infrastructure.db import models  # noqa: F401,E402
+from app.infrastructure.db.base import Base  # noqa: E402
 
 config = context.config
 
@@ -22,10 +22,17 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(obj, name, type_, reflected, compare_to):
+    # Retired task rows remain as read-only historical accounting evidence.
+    return not (type_ == "table" and name == "legacy_payment_tasks")
+
+
 def get_url() -> str:
     url = os.getenv("DATABASE_URL")
     if not url:
-        raise RuntimeError("DATABASE_URL is not set")
+        from app.core.settings import settings
+
+        url = settings.database_url
     return url
 
 
@@ -35,6 +42,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
+        include_object=include_object,
         dialect_opts={"paramstyle": "named"},
     )
 
@@ -57,6 +65,7 @@ async def run_migrations_online() -> None:
             connection=sync_conn,
             target_metadata=target_metadata,
             compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

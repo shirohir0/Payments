@@ -38,9 +38,6 @@ class PaymentDLQRepository:
 
     async def list_latest(self, limit: int = 50, offset: int = 0) -> list[PaymentDLQModel]:
         result = await self.session.execute(
-            select(PaymentDLQModel)
-            .order_by(PaymentDLQModel.id.desc())
-            .limit(limit)
-            .offset(offset)
+            select(PaymentDLQModel).order_by(PaymentDLQModel.id.desc()).limit(limit).offset(offset)
         )
         return list(result.scalars().all())
