@@ -1,4 +1,4 @@
-﻿from typing import Annotated
+from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,6 @@ from app.infrastructure.db.session import get_session
 from app.infrastructure.repositories.payment import PaymentRepository
 from app.infrastructure.repositories.transaction import TransactionRepository
 from app.infrastructure.repositories.user import UserRepository
-
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 

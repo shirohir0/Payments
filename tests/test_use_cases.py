@@ -1,75 +1,75 @@
-﻿import pytest
+from decimal import Decimal
+from types import SimpleNamespace
+
+import pytest
 
 from app.application.dto.payment import DepositDTO, WithdrawDTO
 from app.application.use_cases.deposit_balance import DepositBalanceUseCase
 from app.application.use_cases.withdraw_balance import WithdrawBalanceUseCase
 from app.domain.entities.user import User
-from app.domain.exceptions import UserInsufficientFundsError
+from app.domain.exceptions import (
+    IdempotencyConflictError,
+    UserInsufficientFundsError,
+    UserNotFoundError,
+)
+from app.infrastructure.db.models.outbox import OutboxEvent
 from app.infrastructure.db.models.payment import PaymentStatus
 
 
 class FakeSession:
+    def __init__(self):
+        self.added = []
+        self.in_transaction = False
+        self.committed = 0
+
     def begin(self):
         return self
 
     async def __aenter__(self):
+        self.in_transaction = True
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        self.in_transaction = False
+        self.committed += exc_type is None
         return False
 
     async def flush(self):
-        return None
+        assert self.in_transaction
 
-    async def rollback(self):
-        return None
-
-
-class FakePayment:
-    def __init__(self, id, user_id, amount, commission, status, idempotency_key=None):
-        self.id = id
-        self.user_id = user_id
-        self.amount = amount
-        self.commission = commission
-        self.status = status
-        self.idempotency_key = idempotency_key
-        self.last_error = None
+    def add(self, value):
+        assert self.in_transaction, "outbox must be part of the payment transaction"
+        self.added.append(value)
 
 
 class FakeUserRepo:
-    def __init__(self, users: dict[int, User]):
-        self.users = users
+    def __init__(self, balance):
+        self.user = User(id=1, balance=balance)
+        self.locked = False
 
-    async def get_by_id(self, user_id: int):
-        return self.users.get(user_id)
-
-    async def save(self, user: User) -> None:
-        self.users[user.id] = user
+    async def get_for_update(self, user_id):
+        self.locked = True
+        return self.user if user_id == 1 else None
 
 
 class FakePaymentRepo:
     def __init__(self):
-        self._payments: list[FakePayment] = []
-        self._id = 1
+        self.items = []
 
-    async def create(self, user_id: int, amount: float, commission: float, status: PaymentStatus, idempotency_key=None):
-        payment = FakePayment(
-            id=self._id,
-            user_id=user_id,
-            amount=amount,
-            commission=commission,
-            status=status,
-            idempotency_key=idempotency_key,
+    async def create(self, **kwargs):
+        value = SimpleNamespace(id=len(self.items) + 1, last_error=None, **kwargs)
+        self.items.append(value)
+        return value
+
+    async def get_by_idempotency_key(self, user_id, key):
+        return next(
+            (
+                payment
+                for payment in self.items
+                if payment.user_id == user_id and payment.idempotency_key == key
+            ),
+            None,
         )
-        self._id += 1
-        self._payments.append(payment)
-        return payment
-
-    async def get_by_idempotency_key(self, user_id: int, key: str):
-        for p in self._payments:
-            if p.user_id == user_id and p.idempotency_key == key:
-                return p
-        return None
 
 
 class FakeTransactionRepo:
@@ -78,93 +78,114 @@ class FakeTransactionRepo:
 
     async def create(self, **kwargs):
         self.items.append(kwargs)
-        return kwargs
 
 
-class TaskCollector:
-    def __init__(self):
-        self.items: list[int] = []
-
-    def enqueue(self, payment_id: int):
-        self.items.append(payment_id)
+@pytest.fixture
+def wallet():
+    session = FakeSession()
+    users = FakeUserRepo("100.00")
+    payments = FakePaymentRepo()
+    transactions = FakeTransactionRepo()
+    return SimpleNamespace(
+        session=session,
+        users=users,
+        payments=payments,
+        transactions=transactions,
+        deposit=DepositBalanceUseCase(users, payments, transactions, session),
+        withdraw=WithdrawBalanceUseCase(users, payments, transactions, session),
+    )
 
 
 @pytest.mark.asyncio
-async def test_deposit_creates_payment_transaction_and_task(monkeypatch):
-    session = FakeSession()
-    users = {1: User(id=1, balance=0)}
-    user_repo = FakeUserRepo(users)
-    payment_repo = FakePaymentRepo()
-    transaction_repo = FakeTransactionRepo()
-    tasks = TaskCollector()
-
-    monkeypatch.setattr("app.application.use_cases.deposit_balance.enqueue_payment", tasks.enqueue)
-
-    use_case = DepositBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
-    payment_id = await use_case.execute(DepositDTO(user_id=1, amount=100, idempotency_key="k1"))
-
-    assert payment_id == 1
-    assert len(payment_repo._payments) == 1
-    assert len(transaction_repo.items) == 1
-    assert tasks.items == [1]
+async def test_deposit_atomically_creates_transaction_and_outbox(wallet):
+    payment_id = await wallet.deposit.execute(
+        DepositDTO(user_id=1, amount="100.00", idempotency_key="deposit-1")
+    )
+    assert wallet.users.locked
+    assert wallet.session.committed == 1
+    assert wallet.payments.items[0].commission == Decimal("2.00")
+    assert wallet.payments.items[0].operation == "deposit"
+    assert len(wallet.transactions.items) == 1
+    assert len(wallet.session.added) == 1
+    assert isinstance(wallet.session.added[0], OutboxEvent)
+    assert wallet.session.added[0].payment_id == payment_id
+    assert wallet.users.user.balance == Decimal("100.00")
 
 
 @pytest.mark.asyncio
-async def test_deposit_idempotency_returns_existing(monkeypatch):
-    session = FakeSession()
-    users = {1: User(id=1, balance=0)}
-    user_repo = FakeUserRepo(users)
-    payment_repo = FakePaymentRepo()
-    transaction_repo = FakeTransactionRepo()
-    tasks = TaskCollector()
-
-    monkeypatch.setattr("app.application.use_cases.deposit_balance.enqueue_payment", tasks.enqueue)
-
-    use_case = DepositBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
-    first_id = await use_case.execute(DepositDTO(user_id=1, amount=100, idempotency_key="k1"))
-    second_id = await use_case.execute(DepositDTO(user_id=1, amount=100, idempotency_key="k1"))
-
+async def test_idempotent_withdrawal_does_not_double_reserve_or_enqueue(wallet):
+    dto = WithdrawDTO(user_id=1, amount="10.00", idempotency_key="withdraw-1")
+    first_id = await wallet.withdraw.execute(dto)
+    second_id = await wallet.withdraw.execute(dto)
     assert first_id == second_id
-    assert len(payment_repo._payments) == 1
-    assert tasks.items == [1]
+    assert (
+        len(wallet.payments.items)
+        == len(wallet.transactions.items)
+        == len(wallet.session.added)
+        == 1
+    )
+    assert wallet.users.user.reserved_balance == Decimal("10.20")
+    assert wallet.users.user.balance == Decimal("100.00")
 
 
 @pytest.mark.asyncio
-async def test_withdraw_insufficient_funds_creates_failed_payment(monkeypatch):
-    session = FakeSession()
-    users = {1: User(id=1, balance=0)}
-    user_repo = FakeUserRepo(users)
-    payment_repo = FakePaymentRepo()
-    transaction_repo = FakeTransactionRepo()
-    tasks = TaskCollector()
+async def test_exact_available_balance_can_be_fully_reserved(wallet):
+    wallet.users.user.balance = Decimal("1.02")
+    await wallet.withdraw.execute(
+        WithdrawDTO(user_id=1, amount="1.00", idempotency_key="exact-boundary")
+    )
+    assert wallet.users.user.reserved_balance == Decimal("1.02")
+    assert wallet.payments.items[0].funds_reserved is True
 
-    monkeypatch.setattr("app.application.use_cases.withdraw_balance.enqueue_payment", tasks.enqueue)
 
-    use_case = WithdrawBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
-
+@pytest.mark.asyncio
+async def test_other_withdrawal_cannot_spend_reserved_funds(wallet):
+    await wallet.withdraw.execute(WithdrawDTO(user_id=1, amount="90.00", idempotency_key="first"))
     with pytest.raises(UserInsufficientFundsError):
-        await use_case.execute(WithdrawDTO(user_id=1, amount=10, idempotency_key="k2"))
-
-    assert len(payment_repo._payments) == 1
-    assert payment_repo._payments[0].status == PaymentStatus.FAILED
-    assert len(transaction_repo.items) == 1
-    assert tasks.items == []
+        await wallet.withdraw.execute(
+            WithdrawDTO(user_id=1, amount="10.00", idempotency_key="second")
+        )
+    assert wallet.users.user.reserved_balance == Decimal("91.80")
+    assert wallet.payments.items[1].status == PaymentStatus.FAILED
+    assert wallet.payments.items[1].funds_reserved is False
+    assert len(wallet.session.added) == 1
+    assert wallet.session.committed == 2
 
 
 @pytest.mark.asyncio
-async def test_withdraw_success_enqueues_task(monkeypatch):
-    session = FakeSession()
-    users = {1: User(id=1, balance=100)}
-    user_repo = FakeUserRepo(users)
-    payment_repo = FakePaymentRepo()
-    transaction_repo = FakeTransactionRepo()
-    tasks = TaskCollector()
+async def test_insufficient_funds_replay_preserves_original_result_after_balance_change(wallet):
+    dto = WithdrawDTO(user_id=1, amount="100.00", idempotency_key="insufficient")
+    for new_balance in [Decimal("100.00"), Decimal("1000.00")]:
+        wallet.users.user.balance = new_balance
+        with pytest.raises(UserInsufficientFundsError, match="payment_id=1"):
+            await wallet.withdraw.execute(dto)
+    assert len(wallet.payments.items) == len(wallet.transactions.items) == 1
+    assert wallet.session.added == []
+    assert wallet.session.committed == 2
 
-    monkeypatch.setattr("app.application.use_cases.withdraw_balance.enqueue_payment", tasks.enqueue)
 
-    use_case = WithdrawBalanceUseCase(user_repo, payment_repo, transaction_repo, session)
-    payment_id = await use_case.execute(WithdrawDTO(user_id=1, amount=10, idempotency_key="k3"))
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["amount", "operation"])
+async def test_idempotency_key_cannot_be_reused_for_another_payload(wallet, change):
+    await wallet.deposit.execute(DepositDTO(user_id=1, amount="10.00", idempotency_key="same"))
+    command = wallet.withdraw if change == "operation" else wallet.deposit
+    dto = DepositDTO(
+        user_id=1,
+        amount="10.00" if change == "operation" else "11.00",
+        idempotency_key="same",
+    )
+    with pytest.raises(IdempotencyConflictError):
+        await command.execute(dto)
+    assert len(wallet.session.added) == 1
+    assert wallet.users.user.reserved_balance == Decimal("0.00")
 
-    assert payment_id == 1
-    assert len(payment_repo._payments) == 1
-    assert tasks.items == [1]
+
+@pytest.mark.asyncio
+async def test_missing_user_creates_no_payment_or_outbox(wallet):
+    with pytest.raises(UserNotFoundError):
+        await wallet.deposit.execute(
+            DepositDTO(user_id=999, amount="1.00", idempotency_key="missing")
+        )
+    assert wallet.payments.items == []
+    assert wallet.session.added == []
+    assert wallet.session.committed == 0
