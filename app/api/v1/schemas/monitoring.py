@@ -1,5 +1,5 @@
-﻿from datetime import datetime
-from typing import Optional
+from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -13,12 +13,12 @@ class DlqItemResponse(BaseModel):
     id: int
     payment_id: int
     user_id: int
-    amount: float
-    commission: float
+    amount: Decimal
+    commission: Decimal
     payment_type: str
     error: str
     attempts: int
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
 
 
 class MetricsResponse(RootModel[dict[str, int]]):

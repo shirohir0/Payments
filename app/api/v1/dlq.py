@@ -2,8 +2,8 @@ import logging
 
 from fastapi import APIRouter, Query
 
-from app.infrastructure.db.session import session_depends
 from app.api.v1.schemas.monitoring import DlqItemResponse
+from app.infrastructure.db.session import session_depends
 from app.infrastructure.repositories.payment_dlq import PaymentDLQRepository
 
 router = APIRouter(prefix="/dlq", tags=["DLQ"])
@@ -24,8 +24,8 @@ async def list_dlq(
             "id": item.id,
             "payment_id": item.payment_id,
             "user_id": item.user_id,
-            "amount": float(item.amount),
-            "commission": float(item.commission),
+            "amount": item.amount,
+            "commission": item.commission,
             "payment_type": item.payment_type,
             "error": item.error,
             "attempts": item.attempts,
