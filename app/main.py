@@ -1,47 +1,77 @@
-﻿from contextlib import asynccontextmanager
+import re
+from contextlib import asynccontextmanager
+from time import perf_counter
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.v1 import router
-from app.core.logging import setup_logging
+from app.api.v1.health import readiness
+from app.api.v1.metrics import prometheus_metrics
+from app.core.logging import request_id_context, setup_logging
+from app.core.metrics import metrics
+from app.core.security import require_api_key
 from app.core.settings import settings
-from app.infrastructure.db import models as _models  # noqa: F401
-from app.infrastructure.db.base import Base
 from app.infrastructure.db.session import engine
 
 setup_logging()
 
-openapi_tags = [
-    {"name": "Payments", "description": "Операции пополнения/списания и статус платежей."},
-    {"name": "Users", "description": "Создание пользователей и работа с балансом."},
-    {"name": "MockGateway", "description": "Имитация внешнего платёжного шлюза."},
-    {"name": "Health", "description": "Проверка состояния сервиса и базы данных."},
-    {"name": "DLQ", "description": "Очередь неуспешных задач (Dead Letter Queue)."},
-    {"name": "Metrics", "description": "Внутренние метрики сервиса."},
-]
-
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if settings.auto_create_tables:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    # Schema changes are exclusively managed by Alembic.
     yield
     await engine.dispose()
 
 
 app = FastAPI(
     title=settings.app_name,
-    description=(
-        "Сервис обработки платежей с комиссией 2%, асинхронной фоновой обработкой, "
-        "ретраями и интеграцией с платёжным шлюзом."
-    ),
+    description="Internal payment processing API with durable dispatch and explicit reconciliation.",
     version=settings.app_version,
     debug=settings.debug,
-    openapi_tags=openapi_tags,
     lifespan=lifespan,
 )
 
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    incoming = request.headers.get("X-Request-ID", "")
+    request_id = incoming if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", incoming) else uuid4().hex
+    token = request_id_context.set(request_id)
+    started = perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+    finally:
+        route = getattr(request.scope.get("route"), "path", "__unmatched__")
+        if route not in {"/metrics", "/health", "/ready", "/api/v1/health"}:
+            method = (
+                request.method
+                if request.method in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+                else "OTHER"
+            )
+            metrics.requests.labels(method, route, str(status)).observe(perf_counter() - started)
+        request_id_context.reset(token)
+
+
+@app.get("/health", tags=["Health"])
+async def liveness():
+    return {"status": "ok"}
+
+
+app.add_api_route("/ready", readiness, methods=["GET"], tags=["Health"])
+app.add_api_route(
+    "/metrics",
+    prometheus_metrics,
+    methods=["GET"],
+    dependencies=[Depends(require_api_key)],
+    include_in_schema=False,
+)
 register_exception_handlers(app)
 app.include_router(router)
