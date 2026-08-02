@@ -1,109 +1,133 @@
-﻿services:
+name: payments
+
+x-runtime: &runtime
+  image: ${PAYMENTS_IMAGE:-payments:local}
+  build:
+    context: .
+    target: runtime
+  env_file:
+    - .env
+  environment: &app-environment
+    APP_ENV: ${APP_ENV:-local}
+    DEBUG: "false"
+    AUTO_CREATE_TABLES: "false"
+    DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+asyncpg://payments:payments-local@db:5432/payments}
+    PAYMENT_GATEWAY_URL: ${DOCKER_PAYMENT_GATEWAY_URL:-http://mock-gateway:8001/mock-gateway}
+    CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://payments:payments-local@rabbitmq:5672//}
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  stop_grace_period: 60s
+  pids_limit: 128
+  mem_limit: 512m
+
+x-ready-dependencies: &ready-dependencies
   db:
-    image: postgres:16
-    env_file:
-      - .env
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
+
+services:
+  db:
+    image: postgres:16-bookworm
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-payments}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
+      POSTGRES_USER: ${POSTGRES_USER:-payments}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payments-local}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - payments_db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-payments}"]
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: 512m
 
   rabbitmq:
-    image: rabbitmq:3.13-management
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-payments}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-payments-local}
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:${RABBITMQ_PORT:-15673}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15674}:15672"
+    volumes:
+      - payments_rabbitmq:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: 768m
 
   migrate:
-    build: .
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+asyncpg://postgres:root@db:5432/payments}
-    command: ["alembic", "upgrade", "head"]
-    restart: "no"
+    <<: *runtime
+    command: [alembic, upgrade, head]
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"
 
   api:
-    build: .
-    env_file:
-      - .env
-    environment:
-      AUTO_CREATE_TABLES: "false"
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+asyncpg://postgres:root@db:5432/payments}
-      PAYMENT_GATEWAY_URL: ${DOCKER_PAYMENT_GATEWAY_URL:-http://mock-gateway:8001/mock-gateway}
-      CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
-    depends_on:
-      db:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
+    <<: *runtime
+    depends_on: *ready-dependencies
     ports:
-      - "8000:8000"
-    restart: unless-stopped
+      - "127.0.0.1:${API_PORT:-18080}:8000"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   worker:
-    build: .
-    command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=INFO"]
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+asyncpg://postgres:root@db:5432/payments}
-      PAYMENT_GATEWAY_URL: ${DOCKER_PAYMENT_GATEWAY_URL:-http://mock-gateway:8001/mock-gateway}
-      CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
-    depends_on:
-      db:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    restart: unless-stopped
+    <<: *runtime
+    command: [celery, -A, app.workers.celery_app.celery_app, worker, --loglevel=INFO, --concurrency=4, "--hostname=payments@%h"]
+    depends_on: *ready-dependencies
+    healthcheck:
+      test: [CMD-SHELL, 'celery -A app.workers.celery_app.celery_app inspect ping --destination "payments@$$HOSTNAME" --timeout 4 | grep -q pong']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  outbox:
+    <<: *runtime
+    command: [python, -m, app.workers.outbox]
+    depends_on: *ready-dependencies
 
   mock-gateway:
-    build: .
-    env_file:
-      - .env
-    command: ["uvicorn", "app.mock_gateway_app:app", "--host", "0.0.0.0", "--port", "8001"]
-    ports:
-      - "8001:8001"
-    restart: unless-stopped
-
-  tests:
-    build: .
-    command: ["pytest", "-q"]
-    profiles: ["test"]
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+asyncpg://postgres:root@db:5432/payments}
-      PAYMENT_GATEWAY_URL: ${DOCKER_PAYMENT_GATEWAY_URL:-http://mock-gateway:8001/mock-gateway}
-      CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
+    <<: *runtime
+    profiles: [dev]
+    command: [uvicorn, app.mock_gateway_app:app, --host, 0.0.0.0, --port, "8001", --no-server-header]
     depends_on:
       db:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${MOCK_GATEWAY_PORT:-18081}:8001"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   payments_db:
+  payments_rabbitmq:

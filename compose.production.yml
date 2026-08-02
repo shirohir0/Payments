@@ -1,0 +1,43 @@
+# Requires Docker Compose 2.24.4+ for !override and !reset.
+x-production-environment: &production-environment
+  APP_ENV: production
+  DEBUG: "false"
+  AUTO_CREATE_TABLES: "false"
+  DATABASE_URL: ${DOCKER_DATABASE_URL:?Set the production PostgreSQL URL}
+  CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:?Set the production RabbitMQ URL}
+  PAYMENT_GATEWAY_URL: ${PAYMENT_GATEWAY_URL:?Set the real payment gateway URL}
+  API_KEY: ${API_KEY:?Set a unique service API key of at least 32 characters}
+  GATEWAY_IDEMPOTENCY_NAMESPACE: ${GATEWAY_IDEMPOTENCY_NAMESPACE:?Set a unique permanent production gateway namespace}
+
+x-production-runtime: &production-runtime
+  image: ${PAYMENTS_IMAGE:?Set an immutable release image tag or digest}
+  build: !reset null
+  environment: *production-environment
+
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique PostgreSQL password}
+    ports: !reset []
+
+  rabbitmq:
+    environment:
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set a unique RabbitMQ password}
+    ports: !reset []
+
+  migrate:
+    <<: *production-runtime
+
+  api:
+    <<: *production-runtime
+    ports: !override
+      - "127.0.0.1:${API_PORT:-18080}:8000"
+
+  worker:
+    <<: *production-runtime
+
+  outbox:
+    <<: *production-runtime
+
+  mock-gateway:
+    profiles: [dev]
