@@ -1,199 +1,105 @@
-﻿# Payments
+# Payments
 
-Сервис обработки платежей с комиссией и асинхронной фоновой обработкой. Проект построен по Clean Architecture и предназначен для надёжной обработки платежей с ретраями, мониторингом и устойчивостью к сбоям внешнего платёжного шлюза.
+Внутренний HTTP-сервис асинхронной обработки платежей: пополнение и списание баланса, комиссия, резервирование средств и интеграция с внешним платёжным шлюзом.
 
-## Возможности
-- Приём платежей (deposit/withdraw) с комиссией 2%.
-- Асинхронная обработка через воркер (не блокирует API).
-- Очередь задач через RabbitMQ + Celery (production‑ready).
-- Retry с exponential backoff, jitter и таймаутами.
-- Idempotency‑key для защиты от повторных запросов.
-- Dead Letter Queue (DLQ) для окончательно неуспешных задач.
-- Метрики (in‑memory) и health‑check.
-- Swagger/OpenAPI документация.
+Стек: Python 3.12, FastAPI, PostgreSQL, SQLAlchemy, Alembic, Celery и RabbitMQ. API, обработчик задач и outbox-процесс запускаются отдельно.
 
-## Установка
-### 1. Клонирование репозитория
-```bash
-git clone https://github.com/shirohir0/Payments/
-cd Payments
-```
-Скачивает репозиторий и переходит в папку проекта.
+## Поведение
 
-### 2. Установка зависимостей
-```bash
-poetry install
-```
-Создаёт виртуальное окружение и устанавливает зависимости проекта.
+- Денежные значения обрабатываются через `Decimal` и хранятся в PostgreSQL `NUMERIC(12,2)`. Округление комиссии — `ROUND_HALF_UP` до двух знаков.
+- `Idempotency-Key` обязателен. Повтор того же запроса возвращает существующий платёж; другой запрос с тем же ключом получает `409`.
+- Для списания сумма с комиссией резервируется до обращения к шлюзу. Одновременные запросы одного пользователя не могут потратить один остаток несколько раз.
+- Платёж, транзакция и событие outbox сохраняются одной транзакцией БД. Недоступность RabbitMQ не уничтожает принятое намерение платежа.
+- Доставка и обработка допускают повторы. Стабильный ключ передаётся провайдеру; повторная обработка не должна повторно менять баланс.
+- При неизвестном результате провайдера средства остаются зарезервированными. После исчерпания попыток требуется проверка результата у провайдера.
+- Доступ к бизнес-API и метрикам защищается `X-API-Key`. В production ключ обязателен.
 
-### 3. Настройка переменных окружения
-Создайте файл `.env` на основе `.env.example`.
+Это API для доверенного серверного приложения. Сервисный ключ предоставляет доступ к операциям всех пользователей; его нельзя отдавать браузеру или мобильному клиенту. Пользовательскую авторизацию и проверку принадлежности счёта выполняет вызывающее приложение.
 
-**Linux/macOS:**
+## Быстрый запуск
+
+Нужны Docker Engine/Desktop и Docker Compose 2.24.4+.
+
 ```bash
 cp .env.example .env
+docker compose --profile dev up --build -d
 ```
 
-**Windows (PowerShell):**
-```powershell
-Copy-Item .env.example .env
-```
+В PowerShell копирование выполняется командой `Copy-Item .env.example .env`.
 
-## Запуск
-### Запуск через Docker Compose (рекомендуется)
+Compose последовательно поднимает PostgreSQL и RabbitMQ, применяет миграции, запускает API, Celery, outbox и тестовый шлюз. Настройки портов можно изменить в `.env`.
+
+| Сервис | Адрес по умолчанию |
+|---|---|
+| API / Swagger | http://127.0.0.1:18080/docs |
+| Liveness | http://127.0.0.1:18080/health |
+| Readiness | http://127.0.0.1:18080/ready |
+| Prometheus | http://127.0.0.1:18080/metrics |
+| PostgreSQL | `127.0.0.1:15432` |
+| RabbitMQ | `127.0.0.1:15673` |
+| RabbitMQ management | http://127.0.0.1:15674 |
+| Тестовый шлюз | http://127.0.0.1:18081/health |
+
+Опубликованные локальные порты доступны только через loopback. Учётные данные локальной БД и RabbitMQ находятся в `.env.example`; для развёртывания задаются собственные секреты.
+
+Проверка состояния:
+
 ```bash
-docker compose up --build
+docker compose --profile dev ps
+docker compose logs --tail=100 api worker outbox
+curl --fail http://127.0.0.1:18080/ready
 ```
-Собирает и запускает одной командой:
-- `migrate` (автоматический `alembic upgrade head`)
-- `api`
-- `worker`
-- `rabbitmq`
-- `db`
-- `mock-gateway`
 
-**RabbitMQ Management UI:**
-- `http://localhost:15672` (логин/пароль: `guest/guest`)
+## Пример платежа
 
-### Локальный запуск (без Docker)
-1. Запустить PostgreSQL и RabbitMQ отдельно.
-2. Запустить API:
+Ниже команды для Bash. Установите `PAYMENTS_API_KEY` равным `API_KEY` из вашей конфигурации. В локальной среде с пустым `API_KEY` заголовок можно опустить.
+
 ```bash
-poetry run uvicorn app.main:app --reload
-```
-3. Запустить worker:
+export PAYMENTS_API_KEY='your-local-service-key'
 
-**Linux/macOS:**
-```bash
-celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
-```
-
-**Windows (PowerShell):**
-```powershell
-poetry run celery -A app.workers.celery_app.celery_app worker --loglevel=INFO -P solo
-```
-
-### Проверка после старта
-- Health-check: `http://localhost:8000/api/v1/health`
-- Метрики: `http://localhost:8000/api/v1/metrics`
-- Dead Letter Queue: `http://localhost:8000/api/v1/dlq`
-
-Если после изменений в схеме БД сервис стартует некорректно, выполните чистый запуск:
-```bash
-docker compose down -v
-docker compose up --build
-```
-
-## Использование
-### Swagger
-Документация доступна по адресу:
-- `http://localhost:8000/docs`
-
-### Примеры запросов (curl)
-**Создать пользователя:**
-```bash
-curl -X POST http://localhost:8000/api/v1/users/ \
+curl --fail-with-body http://127.0.0.1:18080/api/v1/users/ \
+  -H "X-API-Key: $PAYMENTS_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"balance": 1000}'
-```
+  -d '{"balance":"1000.00"}'
 
-**Пополнение:**
-```bash
-curl -X POST http://localhost:8000/api/v1/payments/deposit \
+curl --fail-with-body http://127.0.0.1:18080/api/v1/payments/withdraw \
+  -H "X-API-Key: $PAYMENTS_API_KEY" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: 123e4567-e89b-12d3-a456-426614174000' \
-  -d '{"user_id": 1, "deposit": 200}'
+  -H 'Idempotency-Key: order-42-withdrawal-1' \
+  -d '{"user_id":1,"amount":"100.00"}'
+
+curl --fail-with-body http://127.0.0.1:18080/api/v1/payments/1 \
+  -H "X-API-Key: $PAYMENTS_API_KEY"
 ```
 
-Если `Idempotency-Key` не передан, каждый запрос считается новым платежом.
+Сохраните `user_id` и `payment_id` из ответов, если БД уже содержит данные. Баланс и резерв доступны через `GET /api/v1/users/{user_id}`. Успешное принятие запроса не означает завершение операции у провайдера: статус проверяется отдельным запросом. При комиссии 2% списание `100.00` резервирует `102.00`.
 
-**Списание:**
+Создание пользователя с начальным балансом предназначено для внутреннего открытия счёта. Оно не подтверждает поступление денег через платёжного провайдера.
+
+## Разработка и проверки
+
+Нужны Python 3.12 и Poetry 2.2.1.
+
 ```bash
-curl -X POST http://localhost:8000/api/v1/payments/withdraw \
-  -H 'Content-Type: application/json' \
-  -d '{"user_id": 1, "amount": 50}'
-```
-
-**Проверка статуса платежа:**
-```bash
-curl http://localhost:8000/api/v1/payments/1
-```
-
-## Скриншоты
-![image](image.png)
-![image-1](image-1.png)
-![image-2](image-2.png)
-![image-3](image-3.png)
-![image-4](image-4.png)
-![image-5](image-5.png)
-![image-6](image-6.png)
-
-## Тесты
-```bash
+poetry install
 poetry run pytest -q
+poetry run ruff check .
 ```
-Запускает тесты проекта.
 
-Запуск тестов в Docker:
+Модульные проверки запускаются без внешнего платёжного провайдера. Интеграционные проверки используют отдельную PostgreSQL; инструкции и ограничения приведены в [руководстве по тестированию](docs/testing.md).
+
+Локальный API вне контейнера:
+
 ```bash
-docker compose run --rm tests
+poetry run alembic upgrade head
+poetry run uvicorn app.main:app --reload --port 18080
 ```
 
-## .env.example
-```env
-# ===============================
-# Application
-# ===============================
-APP_NAME=Payment Service
-APP_ENV=local
-DEBUG=true
+В таком режиме `DATABASE_URL`, `CELERY_BROKER_URL` и `PAYMENT_GATEWAY_URL` должны указывать на опубликованные локальные порты. Значения `DOCKER_*` используются только Compose для адресов внутри сети контейнеров. Не запускайте второй outbox/worker на боевой БД ради локального теста.
 
-# ===============================
-# Database / Postgres
-# ===============================
-POSTGRES_DB=payments
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=root
-DATABASE_URL=postgresql+asyncpg://postgres:root@localhost:5432/payments
-DOCKER_DATABASE_URL=postgresql+asyncpg://postgres:root@db:5432/payments
-AUTO_CREATE_TABLES=false
+## Документация
 
-# ===============================
-# External services
-# ===============================
-PAYMENT_GATEWAY_URL=http://localhost:8000/api/v1/mock-gateway
-DOCKER_PAYMENT_GATEWAY_URL=http://mock-gateway:8001/mock-gateway
-GATEWAY_TIMEOUT_SECONDS=1.0
-GATEWAY_MAX_ATTEMPTS=3
-GATEWAY_BACKOFF_BASE_SECONDS=1.0
-GATEWAY_BACKOFF_MAX_SECONDS=30.0
-GATEWAY_BACKOFF_JITTER_SECONDS=0.5
-
-# ===============================
-# Queue (RabbitMQ / Celery)
-# ===============================
-CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
-DOCKER_CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
-CELERY_RESULT_BACKEND=rpc://
-CELERY_TASK_TIME_LIMIT_SECONDS=30
-CELERY_TASK_SOFT_TIME_LIMIT_SECONDS=25
-
-# ===============================
-# Worker
-# ===============================
-WORKER_POLL_INTERVAL_SECONDS=0.5
-WORKER_PROCESSING_TIMEOUT_SECONDS=30.0
-
-# ===============================
-# Logging
-# ===============================
-LOG_LEVEL=INFO
-
-# ===============================
-# Business
-# ===============================
-TRANSACTION_FEE=2
-```
-
-## Лицензия
-MIT
+- [Архитектура и гарантии](docs/architecture.md)
+- [Контракт API и шлюза](docs/api.md)
+- [Эксплуатация, развёртывание и восстановление](docs/operations.md)
+- [Тестирование и нагрузочные измерения](docs/testing.md)
